@@ -46,6 +46,21 @@ class SignalType(str, Enum):
     TEXT_PATTERN = "text_pattern"
 
 
+class VisualSignalType(str, Enum):
+    """Types of visual signals for boundary detection."""
+    
+    LAYOUT_STRUCTURE_CHANGE = "layout_structure_change"
+    FONT_STYLE_CHANGE = "font_style_change"
+    COLOR_SCHEME_CHANGE = "color_scheme_change"
+    VISUAL_SEPARATOR_LINE = "visual_separator_line"
+    HEADER_FOOTER_CHANGE = "header_footer_change"
+    LOGO_DETECTION = "logo_detection"
+    SIGNATURE_DETECTION = "signature_detection"
+    PAGE_ORIENTATION_CHANGE = "page_orientation_change"
+    COLUMN_LAYOUT_CHANGE = "column_layout_change"
+    WHITESPACE_PATTERN = "whitespace_pattern"
+
+
 class BoundingBox(BaseModel):
     """Represents a bounding box on a page."""
     
@@ -125,6 +140,46 @@ class DocumentMetadata(BaseModel):
     custom_fields: Dict[str, Any] = Field(default_factory=dict)
 
 
+class VisualFeatures(BaseModel):
+    """Visual features extracted from a page."""
+    
+    # Layout features
+    num_columns: int = Field(default=1, ge=1)
+    primary_font_size: Optional[float] = None
+    primary_font_family: Optional[str] = None
+    text_alignment: Optional[str] = None  # left, center, right, justify
+    
+    # Color features
+    background_color: Optional[str] = None
+    primary_text_color: Optional[str] = None
+    has_color_images: bool = False
+    
+    # Structural features
+    has_header: bool = False
+    has_footer: bool = False
+    header_text: Optional[str] = None
+    footer_text: Optional[str] = None
+    
+    # Visual elements
+    num_images: int = Field(default=0, ge=0)
+    num_tables: int = Field(default=0, ge=0)
+    num_charts: int = Field(default=0, ge=0)
+    has_logo: bool = False
+    has_signature: bool = False
+    
+    # Spacing
+    avg_line_spacing: Optional[float] = None
+    margin_top: Optional[float] = None
+    margin_bottom: Optional[float] = None
+    margin_left: Optional[float] = None
+    margin_right: Optional[float] = None
+    
+    # Page characteristics
+    orientation: str = Field(default="portrait")  # portrait or landscape
+    aspect_ratio: Optional[float] = None
+    whitespace_pattern: Optional[str] = None
+
+
 class PageInfo(BaseModel):
     """Information about a single page."""
     
@@ -141,6 +196,14 @@ class PageInfo(BaseModel):
     def is_mostly_empty(self) -> bool:
         """Check if page is mostly empty (less than 50 words)."""
         return self.word_count < 50
+
+
+class PageVisualInfo(PageInfo):
+    """Extended page info with visual features."""
+    
+    visual_features: Optional[VisualFeatures] = None
+    picture_classifications: Dict[str, float] = Field(default_factory=dict)
+    vlm_analysis: Optional[Dict[str, Any]] = None
 
 
 class Document(BaseModel):
