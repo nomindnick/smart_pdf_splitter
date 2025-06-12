@@ -1,0 +1,1 @@
+"""Core business logic for Smart PDF Splitter."""

@@ -1,0 +1,74 @@
+{
+  "documents": [
+    {
+      "pages": "1-4",
+      "type": "Email Chain",
+      "summary": "Email exchange from February 26-28, 2024 between BDM Inc (Lyle Bolte) and Integrated Designs/SOMAM regarding RFI responses #3-6 for electrical and fire alarm work at Fowler HS Gym HVAC project. BDM states the RFI responses are unacceptable and requests final responses. Also discusses construction schedule and exterior work permissions."
+    },
+    {
+      "pages": "5-6",
+      "type": "Email Chain",
+      "summary": "Email from February 22-28, 2024 from Javier Moreno (Fowler USD) announcing Fowler HS Gym construction schedule (March 25 - April 12), with follow-up from Lyle Bolte asking about starting exterior work early."
+    },
+    {
+      "pages": "7-8",
+      "type": "Submittal",
+      "summary": "Submittal Transmittal #0007 dated 2/29/2024 for Schedule of Values, marked 'Revise and Resubmit' with comments about needing to follow AIA Document G703 format. Includes BDM's shop drawing submittal with handwritten notes."
+    },
+    {
+      "pages": "9-12",
+      "type": "Schedule of Values",
+      "summary": "BDM Inc's Schedule of Values dated 2/27/2024 showing detailed breakdown of $1,459,395.00 contract for HVAC work at Malaga ES, John Sutter MS, and Fowler HS. All line items show 0% complete."
+    },
+    {
+      "pages": "13",
+      "type": "Email",
+      "summary": "Email from Lyle Bolte dated February 29, 2024 resubmitting Schedule of Values (Submittal 07.1) and asking for review to proceed with first billing."
+    },
+    {
+      "pages": "14-17",
+      "type": "Application for Payment",
+      "summary": "Application and Certificate for Payment (AIA G702/G703) for period ending 1/31/2024, showing $0.00 work completed on $1,459,395.00 contract with detailed continuation sheets."
+    },
+    {
+      "pages": "18-19",
+      "type": "Invoice",
+      "summary": "MicroMetl packing slips dated 12/15/2023 and 1/31/2024 for Genesis economizers and 14\" welded curbs delivered to BDM Inc for Fowler project."
+    },
+    {
+      "pages": "20-22",
+      "type": "Invoice",
+      "summary": "Geary Pacific Supply sales order packing slips #5410182 and #5410184 dated 2/7/2024 for Bard heat pump units, filters, and outdoor thermostats for John Sutter MS and Malaga ES."
+    },
+    {
+      "pages": "23-25",
+      "type": "Request for Information",
+      "summary": "RFI #7 dated March 28, 2024 from BDM Inc regarding gas line connection points at Fowler HS Gym that don't exist in the specified location. Includes marked-up plumbing plans and photos showing existing heaters with gas lines as proposed connection points."
+    },
+    {
+      "pages": "26-31",
+      "type": "Plans and Specifications",
+      "summary": "Structural engineering drawings (sheets SI-1.1 through SI-1.6) showing HVAC duct support details, round duct seismic bracing systems, hanger attachments to wood joists and timber, and seismic bracing installation requirements with load tables."
+    },
+    {
+      "pages": "32-33",
+      "type": "Cost Proposal",
+      "summary": "Cost Proposal #2 dated 4/5/2024 for $6,707.66 to saw cut, demo and remove existing concrete at AC-14 new concrete pad location. Includes Figueroa Concrete Partners quote for $5,550 plus BDM markups. Requests 5 calendar days."
+    },
+    {
+      "pages": "34",
+      "type": "Cost Proposal",
+      "summary": "Cost Proposal #3 dated 4/5/2024 for $19,295.51 to remove and install new HP-1 Wall Mount Bard Unit at Building 'F' Pre School at Malaga ES. Includes unit cost $13,864.58 plus labor and electrical work. Requests 2 calendar days."
+    },
+    {
+      "pages": "35",
+      "type": "Cost Proposal",
+      "summary": "Cost Proposal #4 dated 4/5/2024 for $85,694.31 for 6 additional HP-2 Bard Units (230/3/207V) that were wrongfully ordered and shipped by distributor. Unit cost $12,296.50 each totaling $73,779 plus markups. Requests 2 calendar days."
+    },
+    {
+      "pages": "36",
+      "type": "Email",
+      "summary": "Email dated April 9, 2024 from Christine Hoskins to May Yang requesting review, signature and return of PCOR #2 (demolition for the concrete) for the Fowler HVAC project."
+    }
+  ]
+}
