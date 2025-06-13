@@ -27,9 +27,10 @@ python-dotenv==1.0.1
 httpx==0.27.0
 aiofiles==23.2.1
 
-# Image processing (for visual analysis)
+# Image processing (for visual analysis and OCR preprocessing)
 Pillow==10.3.0
 opencv-python-headless==4.9.0.80
+scikit-image==0.22.0  # Advanced image processing for OCR
 
 # PDF processing utilities
 pypdf==4.1.0

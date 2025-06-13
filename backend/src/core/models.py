@@ -204,10 +204,22 @@ class PageInfo(BaseModel):
     has_tables: bool = False
     word_count: int = Field(default=0, ge=0)
     
+    # OCR quality information
+    ocr_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
+    ocr_quality_assessment: Optional[str] = None
+    ocr_issues: List[str] = Field(default_factory=list)
+    preprocessing_applied: List[str] = Field(default_factory=list)
+    corrections_made: int = Field(default=0, ge=0)
+    
     @property
     def is_mostly_empty(self) -> bool:
         """Check if page is mostly empty (less than 50 words)."""
         return self.word_count < 50
+    
+    @property
+    def needs_review(self) -> bool:
+        """Check if page needs manual review based on OCR quality."""
+        return (self.ocr_confidence is not None and self.ocr_confidence < 0.6) or len(self.ocr_issues) > 2
 
 
 class PageVisualInfo(PageInfo):
