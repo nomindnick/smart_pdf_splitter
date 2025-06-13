@@ -1,80 +1,90 @@
 """
-Visual boundary detection module for identifying document boundaries using visual features.
+Visual boundary detection module for analyzing visual features to detect document boundaries.
 
-This module uses layout analysis, visual separators, and structural changes to detect
-where documents begin and end in multi-document PDFs.
+This module implements visual signal detection methods to identify document boundaries
+using layout changes, font variations, color schemes, margins, and other visual cues.
 """
 
 import logging
-from typing import List, Optional, Dict, Any, Tuple
-import numpy as np
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
+import numpy as np
+from collections import defaultdict
 
 from .models import (
-    PageVisualInfo, 
-    Boundary, 
-    Signal, 
-    SignalType,
+    PageVisualInfo,
+    VisualFeatures,
+    VisualSignal,
     VisualSignalType,
-    VisualFeatures
+    DocumentType
 )
-from .visual_processor import VisualFeatureProcessor
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class VisualBoundaryCandidate:
-    """Candidate boundary based on visual analysis."""
+    """Represents a potential document boundary based on visual signals."""
     page_number: int
-    visual_signals: List[Signal]
-    visual_confidence: float
-    layout_change_score: float
-    visual_separator_score: float
+    visual_signals: List[VisualSignal]
+    confidence: float
+    layout_similarity_score: float = 0.0
+    visual_continuity_score: float = 0.0
     
+    @property
+    def total_visual_confidence(self) -> float:
+        """Calculate total confidence from visual signals."""
+        if not self.visual_signals:
+            return 0.0
+        return sum(s.confidence for s in self.visual_signals) / len(self.visual_signals)
+
 
 class VisualBoundaryDetector:
     """
     Detects document boundaries using visual features and layout analysis.
+    
+    Analyzes visual characteristics like layout structure, fonts, colors,
+    margins, and visual elements to identify document transitions.
     """
     
-    # Thresholds for visual changes
-    LAYOUT_CHANGE_THRESHOLD = 0.3
-    FONT_CHANGE_THRESHOLD = 2.0  # Font size difference in points
-    MARGIN_CHANGE_THRESHOLD = 0.1  # 10% of page dimension
-    COLOR_CHANGE_THRESHOLD = 0.2
-    
-    # Visual signal weights
+    # Visual signal weights for confidence calculation
     VISUAL_SIGNAL_WEIGHTS = {
         VisualSignalType.LAYOUT_STRUCTURE_CHANGE: 0.8,
-        VisualSignalType.FONT_STYLE_CHANGE: 0.6,
-        VisualSignalType.COLOR_SCHEME_CHANGE: 0.5,
+        VisualSignalType.FONT_STYLE_CHANGE: 0.7,
+        VisualSignalType.COLOR_SCHEME_CHANGE: 0.6,
         VisualSignalType.VISUAL_SEPARATOR_LINE: 0.9,
-        VisualSignalType.HEADER_FOOTER_CHANGE: 0.7,
-        VisualSignalType.LOGO_DETECTION: 0.8,
-        VisualSignalType.SIGNATURE_DETECTION: 0.6,
-        VisualSignalType.PAGE_ORIENTATION_CHANGE: 0.9,
+        VisualSignalType.HEADER_FOOTER_CHANGE: 0.75,
+        VisualSignalType.LOGO_DETECTION: 0.85,
+        VisualSignalType.SIGNATURE_DETECTION: 0.8,
+        VisualSignalType.PAGE_ORIENTATION_CHANGE: 0.95,
         VisualSignalType.COLUMN_LAYOUT_CHANGE: 0.7,
-        VisualSignalType.WHITESPACE_PATTERN: 0.5
+        VisualSignalType.WHITESPACE_PATTERN: 0.5,
     }
+    
+    # Thresholds for detection
+    LAYOUT_CHANGE_THRESHOLD = 0.3  # 30% difference in layout metrics
+    FONT_CHANGE_THRESHOLD = 2.0    # 2pt font size difference
+    COLOR_CHANGE_THRESHOLD = 0.2   # 20% color difference
+    MARGIN_CHANGE_THRESHOLD = 20   # 20px margin difference
+    WHITESPACE_THRESHOLD = 0.7     # 70% of page is whitespace
     
     def __init__(
         self,
         min_visual_confidence: float = 0.5,
-        enable_vlm_analysis: bool = True,
-        visual_processor: Optional[VisualFeatureProcessor] = None
+        min_visual_signals: int = 1,
+        enable_vlm_analysis: bool = False
     ):
         """
         Initialize visual boundary detector.
         
         Args:
-            min_visual_confidence: Minimum confidence for visual boundaries
-            enable_vlm_analysis: Whether to use VLM for analysis
-            visual_processor: Optional visual feature processor instance
+            min_visual_confidence: Minimum confidence threshold for visual boundaries
+            min_visual_signals: Minimum number of visual signals required
+            enable_vlm_analysis: Whether to use vision-language model analysis
         """
         self.min_visual_confidence = min_visual_confidence
+        self.min_visual_signals = min_visual_signals
         self.enable_vlm_analysis = enable_vlm_analysis
-        self.visual_processor = visual_processor or VisualFeatureProcessor()
     
     def detect_visual_boundaries(
         self,
@@ -82,425 +92,566 @@ class VisualBoundaryDetector:
         context_window: int = 2
     ) -> List[VisualBoundaryCandidate]:
         """
-        Detect boundaries based on visual features.
+        Detect document boundaries based on visual features.
         
         Args:
-            pages: List of pages with visual information
-            context_window: Number of pages to consider for context
+            pages: List of pages with visual features
+            context_window: Number of pages to look ahead/behind for context
             
         Returns:
             List of visual boundary candidates
         """
-        if not pages or len(pages) < 2:
+        if not pages:
             return []
         
         candidates = []
         
-        # Analyze each page transition
+        # Analyze each page transition for visual changes
         for i in range(1, len(pages)):
-            prev_page = pages[i - 1]
+            prev_page = pages[i-1]
             curr_page = pages[i]
+            
+            if not (prev_page.visual_features and curr_page.visual_features):
+                continue
             
             visual_signals = []
             
-            # Check layout structure changes
-            layout_signal = self._detect_layout_change(prev_page, curr_page)
+            # Check for layout structure changes
+            layout_signal = self._detect_layout_change(
+                prev_page.visual_features,
+                curr_page.visual_features,
+                curr_page.page_number
+            )
             if layout_signal:
                 visual_signals.append(layout_signal)
             
-            # Check font style changes
-            font_signal = self._detect_font_change(prev_page, curr_page)
+            # Check for font style changes
+            font_signal = self._detect_font_change(
+                prev_page.visual_features,
+                curr_page.visual_features,
+                curr_page.page_number
+            )
             if font_signal:
                 visual_signals.append(font_signal)
             
-            # Check color scheme changes
-            color_signal = self._detect_color_change(prev_page, curr_page)
+            # Check for color scheme changes
+            color_signal = self._detect_color_change(
+                prev_page.visual_features,
+                curr_page.visual_features,
+                curr_page.page_number
+            )
             if color_signal:
                 visual_signals.append(color_signal)
             
-            # Check for visual separators
+            # Check for margin changes
+            margin_signal = self._detect_margin_change(
+                prev_page.visual_features,
+                curr_page.visual_features,
+                curr_page.page_number
+            )
+            if margin_signal:
+                visual_signals.append(margin_signal)
+            
+            # Check for header/footer changes
+            header_footer_signal = self._detect_header_footer_change(
+                prev_page.visual_features,
+                curr_page.visual_features,
+                curr_page.page_number
+            )
+            if header_footer_signal:
+                visual_signals.append(header_footer_signal)
+            
+            # Check for visual separator lines
             separator_signal = self._detect_visual_separator(curr_page)
             if separator_signal:
                 visual_signals.append(separator_signal)
             
-            # Check header/footer changes
-            header_footer_signal = self._detect_header_footer_change(prev_page, curr_page)
-            if header_footer_signal:
-                visual_signals.append(header_footer_signal)
-            
-            # Check for logos (often indicate new document)
-            logo_signal = self._detect_logo_change(prev_page, curr_page)
+            # Check for logo presence (often indicates new document)
+            logo_signal = self._detect_logo_presence(curr_page.visual_features, curr_page.page_number)
             if logo_signal:
                 visual_signals.append(logo_signal)
             
-            # Check page orientation
-            orientation_signal = self._detect_orientation_change(prev_page, curr_page)
+            # Check for signature (often indicates document end)
+            if i > 0:
+                signature_signal = self._detect_signature_presence(
+                    prev_page.visual_features,
+                    prev_page.page_number
+                )
+                if signature_signal:
+                    visual_signals.append(signature_signal)
+            
+            # Check for page orientation changes
+            orientation_signal = self._detect_orientation_change(
+                prev_page.visual_features,
+                curr_page.visual_features,
+                curr_page.page_number
+            )
             if orientation_signal:
                 visual_signals.append(orientation_signal)
             
-            # Check whitespace patterns
-            whitespace_signal = self._detect_whitespace_pattern(prev_page, curr_page)
+            # Check for column layout changes
+            column_signal = self._detect_column_change(
+                prev_page.visual_features,
+                curr_page.visual_features,
+                curr_page.page_number
+            )
+            if column_signal:
+                visual_signals.append(column_signal)
+            
+            # Check for significant whitespace patterns
+            whitespace_signal = self._detect_whitespace_pattern(curr_page)
             if whitespace_signal:
                 visual_signals.append(whitespace_signal)
             
-            # Analyze with VLM if enabled
-            if self.enable_vlm_analysis and visual_signals:
-                vlm_signal = self._analyze_with_vlm(prev_page, curr_page)
+            # Use VLM analysis if enabled
+            if self.enable_vlm_analysis and curr_page.vlm_analysis:
+                vlm_signal = self._analyze_vlm_results(curr_page.vlm_analysis, curr_page.page_number)
                 if vlm_signal:
                     visual_signals.append(vlm_signal)
             
-            # Create candidate if significant visual changes detected
+            # Create candidate if signals found
             if visual_signals:
-                confidence = self._calculate_visual_confidence(visual_signals)
+                # Calculate layout similarity
+                layout_similarity = self._calculate_layout_similarity(
+                    prev_page.visual_features,
+                    curr_page.visual_features
+                )
                 
-                if confidence >= self.min_visual_confidence:
-                    candidate = VisualBoundaryCandidate(
-                        page_number=curr_page.page_number,
-                        visual_signals=visual_signals,
-                        visual_confidence=confidence,
-                        layout_change_score=self._calculate_layout_change_score(
-                            prev_page, curr_page
-                        ),
-                        visual_separator_score=self._calculate_separator_score(curr_page)
-                    )
+                # Calculate visual continuity
+                visual_continuity = self._calculate_visual_continuity(
+                    pages,
+                    i,
+                    context_window
+                )
+                
+                candidate = VisualBoundaryCandidate(
+                    page_number=curr_page.page_number,
+                    visual_signals=visual_signals,
+                    confidence=self._calculate_visual_confidence(visual_signals),
+                    layout_similarity_score=layout_similarity,
+                    visual_continuity_score=visual_continuity
+                )
+                
+                if (candidate.confidence >= self.min_visual_confidence and
+                    len(candidate.visual_signals) >= self.min_visual_signals):
                     candidates.append(candidate)
         
+        logger.info(f"Detected {len(candidates)} visual boundary candidates")
         return candidates
     
     def _detect_layout_change(
         self,
-        prev_page: PageVisualInfo,
-        curr_page: PageVisualInfo
-    ) -> Optional[Signal]:
+        prev_features: VisualFeatures,
+        curr_features: VisualFeatures,
+        page_number: int
+    ) -> Optional[VisualSignal]:
         """Detect significant layout structure changes."""
-        if not (prev_page.visual_features and curr_page.visual_features):
-            return None
+        changes = []
         
-        prev_features = prev_page.visual_features
-        curr_features = curr_page.visual_features
-        
-        # Check column layout change
+        # Check column count change
         if prev_features.num_columns != curr_features.num_columns:
-            return Signal(
-                type=VisualSignalType.COLUMN_LAYOUT_CHANGE,
-                confidence=0.8,
-                page_number=curr_page.page_number,
-                description=f"Column layout changed from {prev_features.num_columns} to {curr_features.num_columns}"
-            )
+            changes.append(f"columns: {prev_features.num_columns}→{curr_features.num_columns}")
         
-        # Check alignment change
-        if prev_features.text_alignment != curr_features.text_alignment:
-            return Signal(
-                type=VisualSignalType.LAYOUT_STRUCTURE_CHANGE,
-                confidence=0.6,
-                page_number=curr_page.page_number,
-                description=f"Text alignment changed from {prev_features.text_alignment} to {curr_features.text_alignment}"
-            )
+        # Check text alignment change
+        if (prev_features.text_alignment and curr_features.text_alignment and
+            prev_features.text_alignment != curr_features.text_alignment):
+            changes.append(f"alignment: {prev_features.text_alignment}→{curr_features.text_alignment}")
         
-        # Check margin changes
-        margin_changes = self._calculate_margin_changes(prev_features, curr_features)
-        if margin_changes > self.MARGIN_CHANGE_THRESHOLD:
-            return Signal(
+        # Check table/chart presence changes
+        prev_has_tables = prev_features.num_tables > 0
+        curr_has_tables = curr_features.num_tables > 0
+        if prev_has_tables != curr_has_tables:
+            changes.append(f"tables: {prev_has_tables}→{curr_has_tables}")
+        
+        if changes:
+            confidence = min(0.8, 0.3 * len(changes))
+            return VisualSignal(
                 type=VisualSignalType.LAYOUT_STRUCTURE_CHANGE,
-                confidence=0.7,
-                page_number=curr_page.page_number,
-                description=f"Significant margin changes detected ({margin_changes:.0%})"
+                confidence=confidence,
+                page_number=page_number,
+                description=f"Layout changes: {', '.join(changes)}"
             )
         
         return None
     
     def _detect_font_change(
         self,
-        prev_page: PageVisualInfo,
-        curr_page: PageVisualInfo
-    ) -> Optional[Signal]:
-        """Detect significant font changes."""
-        if not (prev_page.visual_features and curr_page.visual_features):
+        prev_features: VisualFeatures,
+        curr_features: VisualFeatures,
+        page_number: int
+    ) -> Optional[VisualSignal]:
+        """Detect significant font style changes."""
+        if not (prev_features.primary_font_size and curr_features.primary_font_size):
             return None
         
-        prev_features = prev_page.visual_features
-        curr_features = curr_page.visual_features
-        
         # Check font size change
-        if (prev_features.primary_font_size and curr_features.primary_font_size):
-            size_diff = abs(prev_features.primary_font_size - curr_features.primary_font_size)
-            if size_diff > self.FONT_CHANGE_THRESHOLD:
-                return Signal(
-                    type=VisualSignalType.FONT_STYLE_CHANGE,
-                    confidence=0.7,
-                    page_number=curr_page.page_number,
-                    description=f"Font size changed by {size_diff:.1f} points"
-                )
+        size_diff = abs(prev_features.primary_font_size - curr_features.primary_font_size)
         
         # Check font family change
-        if (prev_features.primary_font_family and curr_features.primary_font_family and
-            prev_features.primary_font_family != curr_features.primary_font_family):
-            return Signal(
+        family_changed = (prev_features.primary_font_family and 
+                         curr_features.primary_font_family and
+                         prev_features.primary_font_family != curr_features.primary_font_family)
+        
+        if size_diff > self.FONT_CHANGE_THRESHOLD or family_changed:
+            changes = []
+            if size_diff > self.FONT_CHANGE_THRESHOLD:
+                changes.append(f"size: {prev_features.primary_font_size:.1f}→{curr_features.primary_font_size:.1f}pt")
+            if family_changed:
+                changes.append(f"family: {prev_features.primary_font_family}→{curr_features.primary_font_family}")
+            
+            confidence = 0.7 if family_changed else 0.6
+            return VisualSignal(
                 type=VisualSignalType.FONT_STYLE_CHANGE,
-                confidence=0.8,
-                page_number=curr_page.page_number,
-                description=f"Font family changed from {prev_features.primary_font_family} to {curr_features.primary_font_family}"
+                confidence=confidence,
+                page_number=page_number,
+                description=f"Font changes: {', '.join(changes)}"
             )
         
         return None
     
     def _detect_color_change(
         self,
-        prev_page: PageVisualInfo,
-        curr_page: PageVisualInfo
-    ) -> Optional[Signal]:
+        prev_features: VisualFeatures,
+        curr_features: VisualFeatures,
+        page_number: int
+    ) -> Optional[VisualSignal]:
         """Detect significant color scheme changes."""
-        if not (prev_page.visual_features and curr_page.visual_features):
-            return None
-        
-        prev_features = prev_page.visual_features
-        curr_features = curr_page.visual_features
+        changes = []
         
         # Check background color change
         if (prev_features.background_color and curr_features.background_color and
             prev_features.background_color != curr_features.background_color):
-            return Signal(
-                type=VisualSignalType.COLOR_SCHEME_CHANGE,
-                confidence=0.6,
-                page_number=curr_page.page_number,
-                description="Background color changed"
-            )
+            changes.append("background color")
         
         # Check text color change
         if (prev_features.primary_text_color and curr_features.primary_text_color and
             prev_features.primary_text_color != curr_features.primary_text_color):
-            return Signal(
+            changes.append("text color")
+        
+        # Check color image presence change
+        if prev_features.has_color_images != curr_features.has_color_images:
+            changes.append(f"color images: {prev_features.has_color_images}→{curr_features.has_color_images}")
+        
+        if len(changes) >= 2:  # Need at least 2 color changes to be significant
+            return VisualSignal(
                 type=VisualSignalType.COLOR_SCHEME_CHANGE,
-                confidence=0.5,
-                page_number=curr_page.page_number,
-                description="Primary text color changed"
+                confidence=0.6,
+                page_number=page_number,
+                description=f"Color changes: {', '.join(changes)}"
             )
         
         return None
     
-    def _detect_visual_separator(self, page: PageVisualInfo) -> Optional[Signal]:
-        """Detect visual separators like lines or boxes."""
-        if not page.visual_features:
+    def _detect_margin_change(
+        self,
+        prev_features: VisualFeatures,
+        curr_features: VisualFeatures,
+        page_number: int
+    ) -> Optional[VisualSignal]:
+        """Detect significant margin changes."""
+        if not all([
+            prev_features.margin_top, prev_features.margin_bottom,
+            prev_features.margin_left, prev_features.margin_right,
+            curr_features.margin_top, curr_features.margin_bottom,
+            curr_features.margin_left, curr_features.margin_right
+        ]):
             return None
         
-        # Check for separator patterns in layout elements
-        for element in page.layout_elements:
-            element_type = element.get('type', '').lower()
-            
-            # Look for horizontal lines that might be separators
-            if element_type in ['line', 'separator', 'rule']:
-                bbox = element.get('bbox')
-                if bbox and hasattr(bbox, 'width') and hasattr(bbox, 'height'):
-                    # Horizontal line (width much greater than height)
-                    if bbox.width > bbox.height * 10:
-                        return Signal(
-                            type=VisualSignalType.VISUAL_SEPARATOR_LINE,
-                            confidence=0.9,
-                            page_number=page.page_number,
-                            description="Horizontal separator line detected"
-                        )
-            
-            # Look for separator boxes
-            elif element_type == 'box' and element.get('is_separator'):
-                return Signal(
-                    type=VisualSignalType.VISUAL_SEPARATOR_LINE,
-                    confidence=0.8,
-                    page_number=page.page_number,
-                    description="Visual separator box detected"
-                )
+        # Calculate margin differences
+        margin_diffs = {
+            'top': abs(prev_features.margin_top - curr_features.margin_top),
+            'bottom': abs(prev_features.margin_bottom - curr_features.margin_bottom),
+            'left': abs(prev_features.margin_left - curr_features.margin_left),
+            'right': abs(prev_features.margin_right - curr_features.margin_right)
+        }
+        
+        # Count significant changes
+        significant_changes = [
+            margin for margin, diff in margin_diffs.items()
+            if diff > self.MARGIN_CHANGE_THRESHOLD
+        ]
+        
+        if len(significant_changes) >= 2:  # At least 2 margins changed significantly
+            return VisualSignal(
+                type=VisualSignalType.LAYOUT_STRUCTURE_CHANGE,
+                confidence=0.65,
+                page_number=page_number,
+                description=f"Margin changes: {', '.join(significant_changes)}"
+            )
         
         return None
     
     def _detect_header_footer_change(
         self,
-        prev_page: PageVisualInfo,
-        curr_page: PageVisualInfo
-    ) -> Optional[Signal]:
-        """Detect changes in headers or footers."""
-        if not (prev_page.visual_features and curr_page.visual_features):
-            return None
+        prev_features: VisualFeatures,
+        curr_features: VisualFeatures,
+        page_number: int
+    ) -> Optional[VisualSignal]:
+        """Detect header/footer changes."""
+        changes = []
         
-        prev_features = prev_page.visual_features
-        curr_features = curr_page.visual_features
-        
-        # Check header change
-        if (prev_features.has_header and curr_features.has_header and
-            prev_features.header_text != curr_features.header_text):
-            return Signal(
-                type=VisualSignalType.HEADER_FOOTER_CHANGE,
-                confidence=0.8,
-                page_number=curr_page.page_number,
-                description="Header content changed"
-            )
-        
-        # Check footer change
-        if (prev_features.has_footer and curr_features.has_footer and
-            prev_features.footer_text != curr_features.footer_text):
-            return Signal(
-                type=VisualSignalType.HEADER_FOOTER_CHANGE,
-                confidence=0.7,
-                page_number=curr_page.page_number,
-                description="Footer content changed"
-            )
-        
-        # Check header/footer appearance or disappearance
+        # Check header presence change
         if prev_features.has_header != curr_features.has_header:
-            return Signal(
+            changes.append(f"header: {prev_features.has_header}→{curr_features.has_header}")
+        
+        # Check footer presence change
+        if prev_features.has_footer != curr_features.has_footer:
+            changes.append(f"footer: {prev_features.has_footer}→{curr_features.has_footer}")
+        
+        # Check header text change (if both have headers)
+        if (prev_features.has_header and curr_features.has_header and
+            prev_features.header_text and curr_features.header_text and
+            prev_features.header_text != curr_features.header_text):
+            changes.append("header text changed")
+        
+        # Check footer text change (if both have footers)
+        if (prev_features.has_footer and curr_features.has_footer and
+            prev_features.footer_text and curr_features.footer_text and
+            prev_features.footer_text != curr_features.footer_text):
+            changes.append("footer text changed")
+        
+        if changes:
+            confidence = min(0.75, 0.25 * len(changes))
+            return VisualSignal(
                 type=VisualSignalType.HEADER_FOOTER_CHANGE,
-                confidence=0.6,
-                page_number=curr_page.page_number,
-                description=f"Header {'appeared' if curr_features.has_header else 'disappeared'}"
+                confidence=confidence,
+                page_number=page_number,
+                description=f"Header/footer changes: {', '.join(changes)}"
             )
         
         return None
     
-    def _detect_logo_change(
-        self,
-        prev_page: PageVisualInfo,
-        curr_page: PageVisualInfo
-    ) -> Optional[Signal]:
-        """Detect appearance of logos."""
-        if not (prev_page.visual_features and curr_page.visual_features):
-            return None
+    def _detect_visual_separator(self, page: PageVisualInfo) -> Optional[VisualSignal]:
+        """Detect visual separator lines or elements."""
+        # Check layout elements for horizontal lines or separators
+        separator_count = 0
         
-        # Logo on current page but not previous
-        if (curr_page.visual_features.has_logo and 
-            not prev_page.visual_features.has_logo):
-            return Signal(
-                type=VisualSignalType.LOGO_DETECTION,
-                confidence=0.8,
-                page_number=curr_page.page_number,
-                description="New logo detected"
+        for element in page.layout_elements:
+            if isinstance(element, dict):
+                # Look for thin horizontal rectangles (lines)
+                if 'bbox' in element:
+                    bbox = element['bbox']
+                    # Check if it's a horizontal line (very thin height, wide width)
+                    if hasattr(bbox, 'height') and hasattr(bbox, 'width'):
+                        aspect_ratio = bbox.width / max(bbox.height, 1)
+                        if aspect_ratio > 50 and bbox.height < 5:
+                            separator_count += 1
+                
+                # Check for separator-like text elements
+                if 'text' in element and isinstance(element['text'], str):
+                    text = element['text'].strip()
+                    if text in ['---', '___', '***', '• • •', '···']:
+                        separator_count += 1
+        
+        if separator_count > 0:
+            return VisualSignal(
+                type=VisualSignalType.VISUAL_SEPARATOR_LINE,
+                confidence=0.9,
+                page_number=page.page_number,
+                description=f"Found {separator_count} visual separator(s)"
             )
         
-        # Check picture classifications for logo
-        if curr_page.picture_classifications:
-            logo_confidence = curr_page.picture_classifications.get('logo', 0)
-            if logo_confidence > 0.7:
-                return Signal(
-                    type=VisualSignalType.LOGO_DETECTION,
-                    confidence=logo_confidence,
-                    page_number=curr_page.page_number,
-                    description=f"Logo detected with {logo_confidence:.0%} confidence"
-                )
-        
+        return None
+    
+    def _detect_logo_presence(self, features: VisualFeatures, page_number: int) -> Optional[VisualSignal]:
+        """Detect logo presence which often indicates document start."""
+        if features.has_logo:
+            return VisualSignal(
+                type=VisualSignalType.LOGO_DETECTION,
+                confidence=0.85,
+                page_number=page_number,
+                description="Logo detected (likely document start)"
+            )
+        return None
+    
+    def _detect_signature_presence(self, features: VisualFeatures, page_number: int) -> Optional[VisualSignal]:
+        """Detect signature presence which often indicates document end."""
+        if features.has_signature:
+            return VisualSignal(
+                type=VisualSignalType.SIGNATURE_DETECTION,
+                confidence=0.8,
+                page_number=page_number,
+                description="Signature detected (likely document end)"
+            )
         return None
     
     def _detect_orientation_change(
         self,
-        prev_page: PageVisualInfo,
-        curr_page: PageVisualInfo
-    ) -> Optional[Signal]:
+        prev_features: VisualFeatures,
+        curr_features: VisualFeatures,
+        page_number: int
+    ) -> Optional[VisualSignal]:
         """Detect page orientation changes."""
-        if not (prev_page.visual_features and curr_page.visual_features):
-            return None
-        
-        if (prev_page.visual_features.orientation != 
-            curr_page.visual_features.orientation):
-            return Signal(
+        if prev_features.orientation != curr_features.orientation:
+            return VisualSignal(
                 type=VisualSignalType.PAGE_ORIENTATION_CHANGE,
-                confidence=0.9,
-                page_number=curr_page.page_number,
-                description=f"Page orientation changed from {prev_page.visual_features.orientation} to {curr_page.visual_features.orientation}"
+                confidence=0.95,
+                page_number=page_number,
+                description=f"Orientation: {prev_features.orientation}→{curr_features.orientation}"
             )
-        
         return None
     
-    def _detect_whitespace_pattern(
+    def _detect_column_change(
         self,
-        prev_page: PageVisualInfo,
-        curr_page: PageVisualInfo
-    ) -> Optional[Signal]:
-        """Detect significant whitespace patterns indicating boundaries."""
-        if not curr_page.visual_features:
-            return None
-        
-        # Check if current page has significantly more whitespace
-        curr_features = curr_page.visual_features
-        
-        # Calculate whitespace score based on margins and content density
-        whitespace_score = 0.0
-        
-        # Large top margin might indicate new document
-        if curr_features.margin_top and curr_features.margin_top > 0.2:
-            whitespace_score += 0.3
-        
-        # Check overall content density
-        if curr_page.word_count < 100 and curr_page.visual_features.num_images == 0:
-            whitespace_score += 0.4
-        
-        # Compare with previous page
-        if prev_page.visual_features:
-            prev_density = prev_page.word_count / (prev_page.width * prev_page.height)
-            curr_density = curr_page.word_count / (curr_page.width * curr_page.height)
-            
-            if curr_density < prev_density * 0.3:  # 70% less dense
-                whitespace_score += 0.3
-        
-        if whitespace_score > 0.5:
-            return Signal(
-                type=VisualSignalType.WHITESPACE_PATTERN,
-                confidence=min(whitespace_score, 0.8),
-                page_number=curr_page.page_number,
-                description="Significant whitespace pattern detected"
+        prev_features: VisualFeatures,
+        curr_features: VisualFeatures,
+        page_number: int
+    ) -> Optional[VisualSignal]:
+        """Detect column layout changes."""
+        if prev_features.num_columns != curr_features.num_columns:
+            # Significant change if going from/to single column
+            is_significant = (
+                prev_features.num_columns == 1 or 
+                curr_features.num_columns == 1 or
+                abs(prev_features.num_columns - curr_features.num_columns) > 1
             )
-        
+            
+            if is_significant:
+                return VisualSignal(
+                    type=VisualSignalType.COLUMN_LAYOUT_CHANGE,
+                    confidence=0.7,
+                    page_number=page_number,
+                    description=f"Columns: {prev_features.num_columns}→{curr_features.num_columns}"
+                )
         return None
     
-    def _analyze_with_vlm(
-        self,
-        prev_page: PageVisualInfo,
-        curr_page: PageVisualInfo
-    ) -> Optional[Signal]:
-        """Use VLM to analyze visual boundary."""
-        if not self.enable_vlm_analysis:
+    def _detect_whitespace_pattern(self, page: PageVisualInfo) -> Optional[VisualSignal]:
+        """Detect significant whitespace patterns."""
+        if not page.visual_features:
             return None
         
-        try:
-            # This would integrate with Docling's VLM capabilities
-            # For demonstration, we'll create a placeholder
-            
-            # Check if VLM analysis is available in page metadata
-            if curr_page.vlm_analysis:
-                boundary_score = curr_page.vlm_analysis.get('boundary_score', 0)
-                if boundary_score > 0.7:
-                    return Signal(
-                        type=VisualSignalType.VISUAL_SEPARATOR_LINE,
-                        confidence=boundary_score,
-                        page_number=curr_page.page_number,
-                        description="VLM detected visual boundary",
-                        metadata={'vlm_analysis': curr_page.vlm_analysis}
+        # Check if page is mostly empty (based on word count)
+        if page.is_mostly_empty:
+            # Calculate whitespace based on margins and content density
+            features = page.visual_features
+            if all([features.margin_top, features.margin_bottom, 
+                   features.margin_left, features.margin_right]):
+                # Calculate approximate whitespace percentage
+                total_margin = (features.margin_top + features.margin_bottom + 
+                              features.margin_left + features.margin_right)
+                page_area = page.width * page.height if page.width > 0 and page.height > 0 else 1
+                margin_area = total_margin * min(page.width, page.height)
+                whitespace_ratio = min(1.0, margin_area / page_area)
+                
+                if whitespace_ratio > self.WHITESPACE_THRESHOLD or page.word_count < 20:
+                    return VisualSignal(
+                        type=VisualSignalType.WHITESPACE_PATTERN,
+                        confidence=0.5 + (0.3 * whitespace_ratio),
+                        page_number=page.page_number,
+                        description=f"High whitespace ratio ({whitespace_ratio:.0%}), {page.word_count} words"
                     )
-        except Exception as e:
-            logger.error(f"Error in VLM analysis: {e}")
         
         return None
     
-    def _calculate_margin_changes(
+    def _analyze_vlm_results(
+        self,
+        vlm_analysis: Dict[str, Any],
+        page_number: int
+    ) -> Optional[VisualSignal]:
+        """Analyze vision-language model results for boundary detection."""
+        if 'boundary_score' in vlm_analysis:
+            score = vlm_analysis['boundary_score']
+            if score > 0.7:
+                return VisualSignal(
+                    type=VisualSignalType.VISUAL_SEPARATOR_LINE,  # Using as generic visual signal
+                    confidence=score,
+                    page_number=page_number,
+                    description=f"VLM boundary detection (score: {score:.2f})"
+                )
+        
+        return None
+    
+    def _calculate_layout_similarity(
         self,
         prev_features: VisualFeatures,
         curr_features: VisualFeatures
     ) -> float:
-        """Calculate the magnitude of margin changes."""
-        changes = []
+        """Calculate layout similarity score between two pages."""
+        similarity_factors = []
         
-        if prev_features.margin_top and curr_features.margin_top:
-            changes.append(abs(prev_features.margin_top - curr_features.margin_top))
-        if prev_features.margin_bottom and curr_features.margin_bottom:
-            changes.append(abs(prev_features.margin_bottom - curr_features.margin_bottom))
-        if prev_features.margin_left and curr_features.margin_left:
-            changes.append(abs(prev_features.margin_left - curr_features.margin_left))
-        if prev_features.margin_right and curr_features.margin_right:
-            changes.append(abs(prev_features.margin_right - curr_features.margin_right))
+        # Column similarity
+        if prev_features.num_columns == curr_features.num_columns:
+            similarity_factors.append(1.0)
+        else:
+            col_diff = abs(prev_features.num_columns - curr_features.num_columns)
+            similarity_factors.append(max(0, 1.0 - col_diff * 0.3))
         
-        return max(changes) if changes else 0.0
+        # Font size similarity
+        if prev_features.primary_font_size and curr_features.primary_font_size:
+            size_diff = abs(prev_features.primary_font_size - curr_features.primary_font_size)
+            similarity_factors.append(max(0, 1.0 - size_diff / 10.0))
+        
+        # Margin similarity
+        if all([prev_features.margin_top, curr_features.margin_top]):
+            margin_diffs = [
+                abs(prev_features.margin_top - curr_features.margin_top),
+                abs(prev_features.margin_bottom - curr_features.margin_bottom) if prev_features.margin_bottom and curr_features.margin_bottom else 0,
+                abs(prev_features.margin_left - curr_features.margin_left) if prev_features.margin_left and curr_features.margin_left else 0,
+                abs(prev_features.margin_right - curr_features.margin_right) if prev_features.margin_right and curr_features.margin_right else 0
+            ]
+            avg_margin_diff = sum(margin_diffs) / 4
+            similarity_factors.append(max(0, 1.0 - avg_margin_diff / 50.0))
+        
+        # Orientation similarity
+        if prev_features.orientation == curr_features.orientation:
+            similarity_factors.append(1.0)
+        else:
+            similarity_factors.append(0.0)
+        
+        # Calculate average similarity
+        return sum(similarity_factors) / len(similarity_factors) if similarity_factors else 0.5
     
-    def _calculate_visual_confidence(self, signals: List[Signal]) -> float:
+    def _calculate_visual_continuity(
+        self,
+        pages: List[PageVisualInfo],
+        current_index: int,
+        window_size: int
+    ) -> float:
+        """Calculate visual continuity score based on surrounding pages."""
+        if not pages or current_index >= len(pages):
+            return 0.5
+        
+        curr_page = pages[current_index]
+        if not curr_page.visual_features:
+            return 0.5
+        
+        continuity_scores = []
+        
+        # Look at previous pages
+        for i in range(max(0, current_index - window_size), current_index):
+            if pages[i].visual_features:
+                similarity = self._calculate_layout_similarity(
+                    pages[i].visual_features,
+                    curr_page.visual_features
+                )
+                # Weight by distance (closer pages have more weight)
+                weight = 1.0 / (current_index - i)
+                continuity_scores.append(similarity * weight)
+        
+        # Look at following pages
+        for i in range(current_index + 1, min(len(pages), current_index + window_size + 1)):
+            if pages[i].visual_features:
+                similarity = self._calculate_layout_similarity(
+                    curr_page.visual_features,
+                    pages[i].visual_features
+                )
+                # Weight by distance
+                weight = 1.0 / (i - current_index)
+                continuity_scores.append(similarity * weight)
+        
+        if continuity_scores:
+            # Lower continuity score suggests a boundary
+            avg_continuity = sum(continuity_scores) / sum(1.0 / (i + 1) for i in range(len(continuity_scores)))
+            return 1.0 - avg_continuity  # Invert so high score means likely boundary
+        
+        return 0.5
+    
+    def _calculate_visual_confidence(self, signals: List[VisualSignal]) -> float:
         """Calculate overall confidence from visual signals."""
         if not signals:
             return 0.0
         
-        # Weighted average of signal confidences
+        # Weighted average based on signal types
         total_weight = 0.0
         weighted_sum = 0.0
         
@@ -514,78 +665,52 @@ class VisualBoundaryDetector:
         
         base_confidence = weighted_sum / total_weight
         
-        # Boost for multiple strong signals
+        # Boost confidence if multiple strong visual signals
         strong_signals = sum(1 for s in signals if s.confidence >= 0.7)
         if strong_signals >= 2:
-            base_confidence = min(1.0, base_confidence * 1.1)
-        
-        # Boost for very strong individual signals
-        max_signal_confidence = max(s.confidence for s in signals)
-        if max_signal_confidence >= 0.9:
-            base_confidence = max(base_confidence, max_signal_confidence * 0.95)
+            base_confidence = min(1.0, base_confidence * 1.15)
         
         return base_confidence
     
-    def _calculate_layout_change_score(
+    def infer_document_type_from_visual(
         self,
-        prev_page: PageVisualInfo,
-        curr_page: PageVisualInfo
-    ) -> float:
-        """Calculate a comprehensive layout change score."""
-        if not (prev_page.visual_features and curr_page.visual_features):
-            return 0.0
+        pages: List[PageVisualInfo],
+        start_idx: int,
+        end_idx: int
+    ) -> Optional[DocumentType]:
+        """
+        Infer document type based on visual characteristics.
         
-        scores = []
-        
-        # Column change
-        if prev_page.visual_features.num_columns != curr_page.visual_features.num_columns:
-            scores.append(0.8)
-        
-        # Visual element count changes
-        prev_elements = (prev_page.visual_features.num_images + 
-                        prev_page.visual_features.num_tables +
-                        prev_page.visual_features.num_charts)
-        curr_elements = (curr_page.visual_features.num_images + 
-                        curr_page.visual_features.num_tables +
-                        curr_page.visual_features.num_charts)
-        
-        if abs(prev_elements - curr_elements) > 2:
-            scores.append(0.6)
-        
-        # Margin changes
-        margin_change = self._calculate_margin_changes(
-            prev_page.visual_features,
-            curr_page.visual_features
-        )
-        if margin_change > 0.1:
-            scores.append(margin_change)
-        
-        # Orientation change
-        if prev_page.visual_features.orientation != curr_page.visual_features.orientation:
-            scores.append(0.9)
-        
-        return max(scores) if scores else 0.0
-    
-    def _calculate_separator_score(self, page: PageVisualInfo) -> float:
-        """Calculate score for visual separators on the page."""
-        score = 0.0
-        
-        # Check for separator elements
-        for element in page.layout_elements:
-            element_type = element.get('type', '').lower()
-            if element_type in ['line', 'separator', 'rule']:
-                score = max(score, 0.8)
-            elif element_type == 'box' and element.get('is_separator'):
-                score = max(score, 0.7)
-        
-        # Check for significant whitespace patterns
-        if page.visual_features:
-            # Large margins might indicate separator page
-            if (page.visual_features.margin_top and page.visual_features.margin_top > 0.3):
-                score = max(score, 0.5)
+        Args:
+            pages: List of pages with visual features
+            start_idx: Start index of document
+            end_idx: End index of document
             
-            # Very low word count might indicate separator page
-            if page.word_count < 50:
-                score = max(score, 0.4)
+        Returns:
+            Inferred document type or None
+        """
+        if not pages or start_idx >= len(pages):
+            return None
         
-        return score
+        # Collect visual characteristics
+        doc_pages = pages[start_idx:min(end_idx + 1, len(pages))]
+        
+        # Count various visual features
+        has_logo = any(p.visual_features.has_logo for p in doc_pages if p.visual_features)
+        has_signature = any(p.visual_features.has_signature for p in doc_pages if p.visual_features)
+        avg_tables = sum(p.visual_features.num_tables for p in doc_pages if p.visual_features) / len(doc_pages)
+        has_multi_column = any(p.visual_features.num_columns > 1 for p in doc_pages if p.visual_features)
+        
+        # Simple heuristics for document type inference
+        if has_logo and avg_tables > 0.5:
+            return DocumentType.INVOICE
+        elif has_signature and len(doc_pages) <= 3:
+            return DocumentType.LETTER
+        elif avg_tables > 1.0:
+            return DocumentType.REPORT
+        elif has_multi_column and len(doc_pages) > 5:
+            return DocumentType.REPORT
+        elif has_logo and len(doc_pages) == 1:
+            return DocumentType.FORM
+        
+        return DocumentType.OTHER

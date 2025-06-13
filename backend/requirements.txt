@@ -41,3 +41,6 @@ pytesseract==0.3.10
 
 # Memory profiling (for development)
 memory-profiler==0.61.0
+
+# LLM integration
+ollama==0.4.4

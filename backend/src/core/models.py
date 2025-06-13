@@ -86,6 +86,16 @@ class Signal(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class VisualSignal(BaseModel):
+    """Represents a visual boundary detection signal."""
+    
+    type: VisualSignalType
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    page_number: int = Field(..., ge=1)
+    description: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class Boundary(BaseModel):
     """Represents a document boundary."""
     

@@ -13,17 +13,21 @@ from PIL import Image
 from io import BytesIO
 
 from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.pipeline_options import (
-    PdfPipelineOptions,
-    PictureClassificationOptions,
-    TableDetectionOptions
-)
-from docling.datamodel.base_models import InputFormat, PictureClassificationModel
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.base_models import InputFormat
 from docling_core.types.doc.document import DoclingDocument
 
 from .models import VisualFeatures, PageVisualInfo, BoundingBox
 
 logger = logging.getLogger(__name__)
+
+# Try to import optional features
+try:
+    from docling.datamodel.pipeline_options import PictureClassificationOptions, TableDetectionOptions
+    ADVANCED_FEATURES_AVAILABLE = True
+except ImportError:
+    ADVANCED_FEATURES_AVAILABLE = False
+    logger.warning("Advanced visual features not available in this Docling version")
 
 
 class VisualFeatureProcessor:
@@ -78,7 +82,7 @@ class VisualFeatureProcessor:
         
         # Configure picture classification if available
         # Note: This configuration may need adjustment based on installed Docling version
-        if self.enable_picture_classification:
+        if self.enable_picture_classification and ADVANCED_FEATURES_AVAILABLE:
             try:
                 options.picture_classification_options = PictureClassificationOptions(
                     enabled=True,
@@ -87,9 +91,12 @@ class VisualFeatureProcessor:
             except Exception as e:
                 logger.warning(f"Picture classification options not available: {e}")
                 self.enable_picture_classification = False
+        elif self.enable_picture_classification:
+            logger.info("Picture classification requested but not available in this Docling version")
+            self.enable_picture_classification = False
         
         # Configure table detection
-        if self.enable_table_detection:
+        if self.enable_table_detection and ADVANCED_FEATURES_AVAILABLE:
             try:
                 options.table_detection_options = TableDetectionOptions(
                     enabled=True,
@@ -98,9 +105,16 @@ class VisualFeatureProcessor:
             except Exception as e:
                 logger.warning(f"Table detection options not available: {e}")
                 self.enable_table_detection = False
+        elif self.enable_table_detection:
+            logger.info("Table detection requested but not available in this Docling version")
+            self.enable_table_detection = False
         
         # Set image generation parameters for memory efficiency
-        options.page_image_resolution = min(150, self.max_image_size // 10)
+        # Note: page_image_resolution may not be available in all versions
+        try:
+            options.page_image_resolution = min(150, self.max_image_size // 10)
+        except (AttributeError, ValueError):
+            logger.debug("page_image_resolution not available in this Docling version")
         
         return options
     

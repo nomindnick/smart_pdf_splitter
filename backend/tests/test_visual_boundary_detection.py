@@ -20,12 +20,14 @@ class TestVisualBoundaryDetection:
     @pytest.fixture
     def test_pdf_path(self):
         """Path to test PDF file."""
-        return Path(__file__).parent.parent / "tests" / "test_files" / "Test_PDF_Set_1.pdf"
+        # Navigate to project root then to tests/test_files
+        return Path(__file__).parent.parent.parent / "tests" / "test_files" / "Test_PDF_Set_1.pdf"
     
     @pytest.fixture
     def ground_truth(self):
         """Load ground truth data."""
-        ground_truth_path = Path(__file__).parent.parent / "tests" / "test_files" / "Test_PDF_Set_Ground_Truth.json"
+        # Navigate to project root then to tests/test_files
+        ground_truth_path = Path(__file__).parent.parent.parent / "tests" / "test_files" / "Test_PDF_Set_Ground_Truth.json"
         with open(ground_truth_path, 'r') as f:
             return json.load(f)
     

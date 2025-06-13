@@ -19,6 +19,7 @@ from .models import (
     Signal, 
     SignalType,
     VisualSignalType,
+    VisualSignal,
     DocumentType
 )
 
@@ -221,7 +222,7 @@ class HybridBoundaryDetector:
             page_num = change['page']
             if page_num not in boundary_map and change['type'] in ['orientation_change', 'column_change']:
                 # Create a visual signal for significant layout change
-                signal = Signal(
+                vsignal = VisualSignal(
                     type=VisualSignalType.LAYOUT_STRUCTURE_CHANGE,
                     confidence=0.7,
                     page_number=page_num,
@@ -230,7 +231,7 @@ class HybridBoundaryDetector:
                 
                 candidate = VisualBoundaryCandidate(
                     page_number=page_num,
-                    visual_signals=[signal],
+                    visual_signals=[vsignal],
                     visual_confidence=0.7,
                     layout_change_score=0.8,
                     visual_separator_score=0.0
@@ -261,8 +262,9 @@ class HybridBoundaryDetector:
                 # Boost for agreement
                 combined_confidence = min(1.0, combined_confidence * 1.1)
                 
-                # Combine signals
-                all_signals = text_boundary.signals + visual_candidate.visual_signals
+                # Combine signals (convert visual signals to standard signals)
+                visual_signals_standard = self._convert_visual_signals_to_standard(visual_candidate.visual_signals)
+                all_signals = text_boundary.signals + visual_signals_standard
                 
                 boundary = Boundary(
                     start_page=page_num,
@@ -286,11 +288,12 @@ class HybridBoundaryDetector:
             
             elif visual_candidate and visual_candidate.visual_confidence > 0.7:
                 # Strong visual signal without text confirmation
+                visual_signals_standard = self._convert_visual_signals_to_standard(visual_candidate.visual_signals)
                 boundary = Boundary(
                     start_page=page_num,
                     end_page=page_num,
                     confidence=visual_candidate.visual_confidence * 0.8,  # Slight penalty
-                    signals=visual_candidate.visual_signals,
+                    signals=visual_signals_standard,
                     document_type=self._infer_document_type(page) if page else None,
                     metadata={
                         'visual_confidence': visual_candidate.visual_confidence,
@@ -317,6 +320,48 @@ class HybridBoundaryDetector:
         
         logger.info(f"Detected {len(combined_boundaries)} boundaries using hybrid approach")
         return combined_boundaries
+    
+    def _convert_visual_signals_to_standard(self, visual_signals: List[VisualSignal]) -> List[Signal]:
+        """Convert visual signals to standard signals for boundary objects."""
+        standard_signals = []
+        
+        for vsignal in visual_signals:
+            # Map visual signal types to standard signal types
+            if vsignal.type in [
+                VisualSignalType.LAYOUT_STRUCTURE_CHANGE,
+                VisualSignalType.COLUMN_LAYOUT_CHANGE,
+                VisualSignalType.PAGE_ORIENTATION_CHANGE
+            ]:
+                signal_type = SignalType.LAYOUT_CHANGE
+            elif vsignal.type in [
+                VisualSignalType.VISUAL_SEPARATOR_LINE,
+                VisualSignalType.WHITESPACE_PATTERN
+            ]:
+                signal_type = SignalType.VISUAL_SEPARATOR
+            elif vsignal.type in [
+                VisualSignalType.FONT_STYLE_CHANGE,
+                VisualSignalType.COLOR_SCHEME_CHANGE,
+                VisualSignalType.HEADER_FOOTER_CHANGE
+            ]:
+                signal_type = SignalType.LAYOUT_CHANGE
+            elif vsignal.type in [
+                VisualSignalType.LOGO_DETECTION,
+                VisualSignalType.SIGNATURE_DETECTION
+            ]:
+                signal_type = SignalType.DOCUMENT_HEADER
+            else:
+                signal_type = SignalType.VISUAL_SEPARATOR
+            
+            standard_signal = Signal(
+                type=signal_type,
+                confidence=vsignal.confidence,
+                page_number=vsignal.page_number,
+                description=f"[Visual] {vsignal.description}",
+                metadata=vsignal.metadata
+            )
+            standard_signals.append(standard_signal)
+        
+        return standard_signals
     
     def _infer_document_type(self, page: PageVisualInfo) -> Optional[DocumentType]:
         """Infer document type from visual features when text detection is not available."""

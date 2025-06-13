@@ -19,7 +19,9 @@ from docling.datamodel.document import ConversionResult
 from docling_core.types.doc.document import DoclingDocument
 from docling.datamodel.pipeline_options import (
     PdfPipelineOptions,
-    TesseractOcrOptions
+    EasyOcrOptions,
+    TesseractOcrOptions,
+    TesseractCliOcrOptions
 )
 from docling.utils.utils import chunkify
 
@@ -40,6 +42,7 @@ class DocumentProcessor:
         self,
         enable_ocr: bool = True,
         ocr_languages: List[str] = None,
+        ocr_engine: str = "easyocr",  # "easyocr", "tesserocr", or "tesseract-cli"
         page_batch_size: int = 4,
         max_memory_mb: int = 4096  # 4GB default limit
     ):
@@ -49,11 +52,13 @@ class DocumentProcessor:
         Args:
             enable_ocr: Whether to enable OCR for scanned documents
             ocr_languages: List of languages for OCR (default: ["en"])
+            ocr_engine: OCR engine to use ("easyocr", "tesserocr", or "tesseract-cli")
             page_batch_size: Number of pages to process in batch
             max_memory_mb: Maximum memory usage in MB
         """
         self.enable_ocr = enable_ocr
         self.ocr_languages = ocr_languages or ["en"]
+        self.ocr_engine = ocr_engine
         self.page_batch_size = page_batch_size
         self.max_memory_mb = max_memory_mb
         
@@ -76,10 +81,38 @@ class DocumentProcessor:
         # OCR configuration
         if self.enable_ocr:
             options.do_ocr = True
-            options.ocr_options = TesseractOcrOptions(
-                kind='tesserocr',
-                lang=self.ocr_languages
-            )
+            
+            # Select OCR engine based on configuration
+            if self.ocr_engine == "easyocr":
+                options.ocr_options = EasyOcrOptions(
+                    kind='easyocr',
+                    lang=self.ocr_languages,
+                    use_gpu=False,  # Disable GPU for memory efficiency
+                    force_full_page_ocr=False,
+                    bitmap_area_threshold=0.05
+                )
+            elif self.ocr_engine == "tesserocr":
+                options.ocr_options = TesseractOcrOptions(
+                    kind='tesserocr',
+                    lang=self.ocr_languages,
+                    force_full_page_ocr=False,
+                    bitmap_area_threshold=0.05
+                )
+            elif self.ocr_engine == "tesseract-cli":
+                options.ocr_options = TesseractCliOcrOptions(
+                    kind='tesseract',
+                    lang=self.ocr_languages,
+                    force_full_page_ocr=False,
+                    bitmap_area_threshold=0.05,
+                    tesseract_cmd='tesseract'  # Use the tesseract command line tool
+                )
+            else:
+                logger.warning(f"Unknown OCR engine: {self.ocr_engine}, using EasyOCR")
+                options.ocr_options = EasyOcrOptions(
+                    kind='easyocr',
+                    lang=self.ocr_languages,
+                    use_gpu=False
+                )
         else:
             options.do_ocr = False
         
@@ -168,7 +201,10 @@ class DocumentProcessor:
         doc: DoclingDocument = result.document
         
         # Process pages in batches for memory efficiency
-        total_pages = doc.num_pages if hasattr(doc, 'num_pages') else len(result.pages)
+        if hasattr(doc, 'num_pages'):
+            total_pages = doc.num_pages() if callable(doc.num_pages) else doc.num_pages
+        else:
+            total_pages = len(result.pages)
         page_numbers = list(range(1, total_pages + 1))
         
         for page_batch in chunkify(page_numbers, self.page_batch_size):

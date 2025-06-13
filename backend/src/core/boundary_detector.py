@@ -355,7 +355,7 @@ class BoundaryDetector:
             return DocumentType.PURCHASE_ORDER
         
         if any(p in text_lower for p in ['quotation', 'quote', 'estimate']):
-            return DocumentType.QUOTE
+            return DocumentType.OTHER  # Quote not in enum, use OTHER
         
         if 'contract' in text_lower and 'agreement' in text_lower:
             return DocumentType.CONTRACT
