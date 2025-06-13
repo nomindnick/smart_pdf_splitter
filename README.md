@@ -5,6 +5,7 @@ A modular PDF splitting application that automatically detects document boundari
 ## Features
 
 - 🔍 **Automatic Boundary Detection**: Uses content and visual analysis to detect where one document ends and another begins
+- 🤖 **LLM-Powered Intelligence**: Optional Phi-4 Mini integration for enhanced boundary detection using semantic understanding
 - 👀 **Visual Verification Interface**: Review and adjust detected boundaries before splitting
 - 📄 **Multiple Document Types**: Supports emails, invoices, reports, contracts, and more
 - 🚀 **High Performance**: Processes up to 10 pages per second with memory-efficient streaming
@@ -114,8 +115,20 @@ Key environment variables:
 - `REDIS_URL`: Redis connection string
 - `MAX_UPLOAD_SIZE`: Maximum file size (default: 500MB)
 - `MAX_PAGES_PER_DOCUMENT`: Maximum pages per PDF (default: 1000)
+- `ENABLE_LLM_DETECTION`: Enable LLM-powered boundary detection (default: false)
+- `LLM_MODEL`: Ollama model to use (default: phi4-mini:3.8b)
 
 See `backend/.env.example` for all configuration options.
+
+### LLM-Powered Detection (Optional)
+
+For enhanced boundary detection using LLM:
+
+1. Install [Ollama](https://ollama.ai)
+2. Pull the Phi-4 Mini model: `ollama pull phi4-mini:3.8b`
+3. Set `ENABLE_LLM_DETECTION=true` in your `.env` file
+
+See [docs/llm_setup.md](docs/llm_setup.md) for detailed setup instructions.
 
 ## Memory Requirements
 

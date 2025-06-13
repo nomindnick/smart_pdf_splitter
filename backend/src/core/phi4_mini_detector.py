@@ -141,8 +141,21 @@ Respond in JSON format:
         """Test Ollama connection and model availability."""
         try:
             # Check if model is available
-            models = self.client.list()
-            model_names = [m['name'] for m in models.get('models', [])]
+            response = self.client.list()
+            
+            # Handle both dict and object responses
+            if hasattr(response, 'models'):
+                models_list = response.models
+            else:
+                models_list = response.get('models', [])
+            
+            # Extract model names
+            model_names = []
+            for m in models_list:
+                if isinstance(m, dict):
+                    model_names.append(m.get('name', ''))
+                elif hasattr(m, 'name'):
+                    model_names.append(m.name)
             
             if self.model_name not in model_names:
                 logger.warning(f"Model {self.model_name} not found in Ollama")
