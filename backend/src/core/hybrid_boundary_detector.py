@@ -88,11 +88,10 @@ class HybridBoundaryDetector:
         ) if self.config.enable_visual_features else None
         
         # Initialize processor
-        self.processor = EnhancedDocumentProcessor(
-            enable_visual_features=self.config.enable_visual_features,
-            enable_vlm=self.config.enable_vlm,
-            visual_memory_limit_mb=self.config.visual_memory_limit_mb,
-            page_batch_size=self.config.visual_batch_size
+        self.processor = UnifiedDocumentProcessor(
+            mode=ProcessingMode.SMART if self.config.enable_visual_features else ProcessingMode.BASIC,
+            enable_adaptive=True,
+            visual_batch_size=self.config.visual_batch_size
         )
     
     def detect_boundaries(

@@ -12,7 +12,12 @@ import cv2
 import fitz  # PyMuPDF
 import numpy as np
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.pipeline_options import (
+    PdfPipelineOptions,
+    EasyOcrOptions,
+    TesseractOcrOptions,
+    TesseractCliOcrOptions
+)
 from docling.datamodel.settings import settings
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
@@ -25,8 +30,7 @@ from .ocr_config import OCRConfig, AdaptiveOCRConfigurator
 
 logger = logging.getLogger(__name__)
 
-# Suppress Docling's verbose output
-settings.debug = False
+# Suppress Docling's verbose output - but don't override settings.debug
 
 
 class ProcessingMode(str, Enum):
@@ -115,19 +119,32 @@ class UnifiedDocumentProcessor:
         # OCR configuration
         if config.enable_ocr:
             pipeline_options.do_ocr = True
-            pipeline_options.ocr_options = {
-                "engine": config.ocr_engine,
-                "languages": config.ocr_languages,
-                "force_full_page_ocr": config.force_full_page_ocr,
-                "area_threshold": config.bitmap_area_threshold,
-            }
+            # Create appropriate OCR options based on engine
+            if config.ocr_engine == "easyocr":
+                pipeline_options.ocr_options = EasyOcrOptions(
+                    force_full_page_ocr=config.force_full_page_ocr,
+                    bitmap_area_threshold=config.bitmap_area_threshold,
+                    lang=config.ocr_languages,
+                    use_gpu=config.use_gpu_if_available
+                )
+            elif config.ocr_engine == "tesseract":
+                pipeline_options.ocr_options = TesseractOcrOptions(
+                    force_full_page_ocr=config.force_full_page_ocr,
+                    bitmap_area_threshold=config.bitmap_area_threshold,
+                    lang=config.ocr_languages
+                )
+            elif config.ocr_engine == "tesseract-cli":
+                pipeline_options.ocr_options = TesseractCliOcrOptions(
+                    force_full_page_ocr=config.force_full_page_ocr,
+                    bitmap_area_threshold=config.bitmap_area_threshold,
+                    lang=config.ocr_languages
+                )
         else:
             pipeline_options.do_ocr = False
         
         # Performance settings
         pipeline_options.generate_picture_images = True
         pipeline_options.images_scale = 1.0
-        pipeline_options.keep_tables_as_one_text_block = True
         
         # Initialize converter
         self.converter = DocumentConverter(

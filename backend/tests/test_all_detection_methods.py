@@ -18,13 +18,13 @@ from dataclasses import dataclass
 import time
 
 # Add the backend src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from core.boundary_detector import BoundaryDetector
 from core.visual_boundary_detector import VisualBoundaryDetector
 from core.phi4_mini_detector import Phi4MiniBoundaryDetector
 from core.hybrid_boundary_detector import HybridBoundaryDetector, VisualProcessingConfig
-from core.enhanced_document_processor import EnhancedDocumentProcessor
+from core.unified_document_processor import UnifiedDocumentProcessor, ProcessingMode
 from core.models import Boundary, PageInfo, PageVisualInfo, DocumentType
 
 # Configure logging
@@ -128,10 +128,11 @@ class BoundaryDetectionEvaluator:
                 min_signals=1,
                 enable_visual_analysis=False
             )
-            processor = EnhancedDocumentProcessor(enable_visual_features=False)
+            processor = UnifiedDocumentProcessor(mode=ProcessingMode.BASIC)
             
             # Process document
-            pages = list(processor.process_document(self.test_pdf_path))
+            doc = processor.process_document(self.test_pdf_path)
+            pages = doc.page_info
             
             # Detect boundaries
             boundaries = detector.detect_boundaries(pages)

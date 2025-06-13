@@ -58,7 +58,7 @@ async def upload_document(
         id=document_id,
         filename=file.filename,
         status=ProcessingStatus.PENDING,
-        total_pages=0,  # Will be updated during processing
+        total_pages=1,  # Will be updated during processing
         file_size=file_size,
         original_path=file_path,
     )
