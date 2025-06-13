@@ -12,6 +12,9 @@ from pathlib import Path
 from .boundary_detector import BoundaryDetector, BoundaryCandidate
 from .visual_boundary_detector import VisualBoundaryDetector, VisualBoundaryCandidate
 from .unified_document_processor import UnifiedDocumentProcessor, ProcessingMode
+from .intelligent_ocr_strategy import IntelligentOCRStrategy
+from .pipeline_config import PipelineProfiles
+from .ocr_config import OCRConfig
 from .models import (
     PageInfo, 
     PageVisualInfo, 
@@ -34,17 +37,21 @@ class VisualProcessingConfig:
         enable_visual_features: bool = True,
         enable_picture_classification: bool = True,
         enable_vlm: bool = False,
+        enable_llm: bool = False,
         visual_memory_limit_mb: int = 2048,
         max_image_dimension: int = 1024,
         page_image_resolution: int = 150,
         visual_batch_size: int = 2,
         visual_confidence_threshold: float = 0.5,
         vlm_model: str = "docling-vlm-v1",
-        vlm_prompt_template: str = "Analyze if this page transition represents a document boundary."
+        vlm_prompt_template: str = "Analyze if this page transition represents a document boundary.",
+        enable_intelligent_ocr: bool = True,
+        llm_confidence_threshold: float = 0.7
     ):
         self.enable_visual_features = enable_visual_features
         self.enable_picture_classification = enable_picture_classification
         self.enable_vlm = enable_vlm
+        self.enable_llm = enable_llm
         self.visual_memory_limit_mb = visual_memory_limit_mb
         self.max_image_dimension = max_image_dimension
         self.page_image_resolution = page_image_resolution
@@ -52,6 +59,8 @@ class VisualProcessingConfig:
         self.visual_confidence_threshold = visual_confidence_threshold
         self.vlm_model = vlm_model
         self.vlm_prompt_template = vlm_prompt_template
+        self.enable_intelligent_ocr = enable_intelligent_ocr
+        self.llm_confidence_threshold = llm_confidence_threshold
 
 
 class HybridBoundaryDetector:
@@ -87,11 +96,22 @@ class HybridBoundaryDetector:
             enable_vlm_analysis=self.config.enable_vlm
         ) if self.config.enable_visual_features else None
         
-        # Initialize processor
+        # Initialize intelligent OCR strategy if enabled
+        detection_methods = []
+        if True:  # Text detection is always enabled
+            detection_methods.append("text")
+        if self.config.enable_visual_features:
+            detection_methods.append("visual")
+        if self.config.enable_llm:
+            detection_methods.append("llm")
+            
+        self.ocr_strategy = IntelligentOCRStrategy(detection_methods) if self.config.enable_intelligent_ocr else None
+        
+        # Initialize processor with base config
+        # Will be reconfigured based on intelligent strategy if enabled
         self.processor = UnifiedDocumentProcessor(
             mode=ProcessingMode.SMART if self.config.enable_visual_features else ProcessingMode.BASIC,
-            enable_adaptive=True,
-            visual_batch_size=self.config.visual_batch_size
+            enable_adaptive=True
         )
     
     def detect_boundaries(
@@ -101,7 +121,7 @@ class HybridBoundaryDetector:
         page_range: Optional[Tuple[int, int]] = None
     ) -> List[Boundary]:
         """
-        Detect boundaries using hybrid approach.
+        Detect boundaries using hybrid approach with intelligent OCR.
         
         Args:
             file_path: Path to PDF file
@@ -117,6 +137,11 @@ class HybridBoundaryDetector:
         if use_visual is None:
             use_visual = self.config.enable_visual_features
         
+        # Use intelligent OCR strategy if enabled
+        if self.ocr_strategy and self.config.enable_intelligent_ocr:
+            return self._detect_with_intelligent_ocr(file_path, use_visual, page_range)
+        
+        # Fall back to standard processing
         if use_visual and self.visual_detector:
             # Process with visual features
             pages = list(self.processor.process_document_with_visual(file_path, page_range))
@@ -455,3 +480,214 @@ class HybridBoundaryDetector:
         summary['average_confidence'] = total_confidence / len(boundaries)
         
         return summary
+    
+    def _detect_with_intelligent_ocr(
+        self,
+        file_path: Path,
+        use_visual: bool,
+        page_range: Optional[Tuple[int, int]] = None
+    ) -> List[Boundary]:
+        """
+        Detect boundaries using intelligent OCR strategy.
+        
+        This method:
+        1. Analyzes the document to plan OCR strategy
+        2. Processes pages with appropriate quality based on their importance
+        3. Runs boundary detection with optimized text extraction
+        """
+        logger.info("Using intelligent OCR strategy for boundary detection")
+        
+        # Step 1: Plan OCR strategy
+        ocr_plan = self.ocr_strategy.plan_ocr_strategy(file_path)
+        logger.info(
+            f"OCR Plan: {ocr_plan['quality_summary']['high_quality_pages']} high quality, "
+            f"{ocr_plan['quality_summary']['medium_quality_pages']} medium, "
+            f"{ocr_plan['quality_summary']['fast_pages']} fast, "
+            f"{ocr_plan['quality_summary']['skipped_pages']} skipped"
+        )
+        
+        # Step 2: Process pages according to strategy
+        all_pages = []
+        processed_pages = {}
+        
+        # Process in optimal order
+        for page_idx, page_num in enumerate(ocr_plan['processing_order']):
+            if page_range and (page_num < page_range[0] - 1 or page_num > page_range[1] - 1):
+                continue
+                
+            strategy_info = ocr_plan['page_strategies'][page_num]
+            
+            if strategy_info['strategy'] == 'skip':
+                # Use existing text if available
+                logger.debug(f"Skipping OCR for page {page_num + 1}: {strategy_info['reason']}")
+                continue
+            
+            # Create processor with page-specific config
+            page_config = strategy_info['config']
+            if page_config:
+                # Process single page with specific config
+                page_result = self._process_single_page(
+                    file_path, 
+                    page_num, 
+                    page_config,
+                    use_visual
+                )
+                processed_pages[page_num] = page_result
+                
+                # Early boundary detection on high-quality pages
+                if strategy_info['strategy'] == 'high_quality' and len(processed_pages) > 3:
+                    # Check if we've found enough boundaries to optimize remaining pages
+                    temp_pages = [processed_pages[i] for i in sorted(processed_pages.keys())]
+                    early_boundaries = self._quick_boundary_check(temp_pages)
+                    
+                    if self._can_optimize_remaining(early_boundaries, page_idx, len(ocr_plan['processing_order'])):
+                        logger.info(f"Found sufficient boundaries, optimizing remaining {len(ocr_plan['processing_order']) - page_idx - 1} pages")
+                        # Switch remaining pages to fast mode
+                        for remaining_page in ocr_plan['processing_order'][page_idx + 1:]:
+                            if ocr_plan['page_strategies'][remaining_page]['strategy'] == 'high_quality':
+                                ocr_plan['page_strategies'][remaining_page]['strategy'] = 'fast'
+                                ocr_plan['page_strategies'][remaining_page]['config'] = PipelineProfiles.get_splitter_detection_config()
+        
+        # Step 3: Fill in any gaps with fast processing
+        import fitz
+        doc = fitz.open(str(file_path))
+        total_pages = len(doc)
+        doc.close()
+        
+        for page_num in range(total_pages):
+            if page_num not in processed_pages:
+                # Process with fast config
+                fast_config = PipelineProfiles.get_splitter_detection_config()
+                page_result = self._process_single_page(
+                    file_path,
+                    page_num,
+                    fast_config,
+                    use_visual
+                )
+                processed_pages[page_num] = page_result
+        
+        # Step 4: Assemble pages in order
+        all_pages = [processed_pages[i] for i in sorted(processed_pages.keys())]
+        
+        # Step 5: Run boundary detection
+        if use_visual and self.visual_detector:
+            boundaries = self._detect_hybrid_boundaries(all_pages)
+        else:
+            page_infos = [PageInfo(**p.dict()) if hasattr(p, 'dict') else p for p in all_pages]
+            boundaries = self.text_detector.detect_boundaries(page_infos)
+        
+        # Step 6: If LLM is enabled and we have low-confidence boundaries, enhance with LLM
+        if self.config.enable_llm:
+            boundaries = self._enhance_with_llm(boundaries, all_pages, file_path)
+        
+        return boundaries
+    
+    def _process_single_page(
+        self,
+        file_path: Path,
+        page_num: int,
+        config: OCRConfig,
+        use_visual: bool
+    ) -> Union[PageInfo, PageVisualInfo]:
+        """Process a single page with specific OCR configuration."""
+        # Create temporary processor with specific config
+        temp_processor = UnifiedDocumentProcessor(
+            mode=ProcessingMode.SMART,
+            ocr_config=config,
+            enable_adaptive=False  # Use our specific config
+        )
+        
+        # Process just this page
+        import fitz
+        doc = fitz.open(str(file_path))
+        
+        # Create single-page PDF
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+            single_page_doc = fitz.open()
+            single_page_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
+            single_page_doc.save(tmp_file.name)
+            single_page_doc.close()
+            
+            # Process the single page
+            if use_visual:
+                pages = list(temp_processor.process_document_with_visual(Path(tmp_file.name)))
+                result = pages[0] if pages else None
+            else:
+                processed_doc = temp_processor.process_document(Path(tmp_file.name))
+                result = processed_doc.page_info[0] if processed_doc.page_info else None
+            
+            # Clean up
+            Path(tmp_file.name).unlink()
+        
+        doc.close()
+        
+        # Adjust page number
+        if result:
+            result.page_number = page_num + 1
+        
+        return result
+    
+    def _quick_boundary_check(self, pages: List[PageInfo]) -> List[Boundary]:
+        """Quick boundary check on processed pages."""
+        try:
+            return self.text_detector.detect_boundaries(pages)
+        except:
+            return []
+    
+    def _can_optimize_remaining(
+        self,
+        early_boundaries: List[Boundary],
+        current_idx: int,
+        total_pages: int
+    ) -> bool:
+        """
+        Determine if we can optimize remaining pages based on early results.
+        
+        Returns True if:
+        - We've found a reasonable number of boundaries
+        - The boundaries have high confidence
+        - We've processed enough pages to establish a pattern
+        """
+        if not early_boundaries:
+            return False
+        
+        # Need at least 30% of expected boundaries
+        pages_processed_ratio = current_idx / total_pages
+        if pages_processed_ratio < 0.3:
+            return False
+        
+        # Check average confidence
+        avg_confidence = sum(b.confidence for b in early_boundaries) / len(early_boundaries)
+        if avg_confidence < 0.75:
+            return False
+        
+        # Check if we have a good distribution of boundaries
+        boundaries_per_page = len(early_boundaries) / (current_idx + 1)
+        expected_total_boundaries = boundaries_per_page * total_pages
+        
+        # If we expect a reasonable number of documents (2-20), we can optimize
+        return 2 <= expected_total_boundaries <= 20
+    
+    def _enhance_with_llm(
+        self,
+        boundaries: List[Boundary],
+        pages: List[PageInfo],
+        file_path: Path
+    ) -> List[Boundary]:
+        """
+        Enhance boundaries with LLM analysis for low-confidence cases.
+        
+        This is a placeholder for LLM integration.
+        """
+        # Find low-confidence boundaries
+        low_confidence = [b for b in boundaries if b.confidence < self.config.llm_confidence_threshold]
+        
+        if low_confidence:
+            logger.info(f"Found {len(low_confidence)} low-confidence boundaries for LLM analysis")
+            # TODO: Integrate with Phi-4 Mini or other LLM
+            # For now, just log
+            for boundary in low_confidence:
+                logger.debug(f"Would analyze boundary at page {boundary.start_page} with LLM (confidence: {boundary.confidence:.2f})")
+        
+        return boundaries

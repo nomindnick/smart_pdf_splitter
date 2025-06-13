@@ -81,6 +81,10 @@ class UnifiedDocumentProcessor:
         self.max_ocr_pages = max_ocr_pages
         self.max_memory_mb = max_memory_mb
         
+        # Disable OCR for basic mode by default
+        if self.mode == ProcessingMode.BASIC and ocr_config is None:
+            self.ocr_config.enable_ocr = False
+        
         # Initialize enhancement components for enhanced/smart modes
         if self.mode != ProcessingMode.BASIC:
             self.preprocessor = OCRPreprocessor(
@@ -125,7 +129,7 @@ class UnifiedDocumentProcessor:
                     force_full_page_ocr=config.force_full_page_ocr,
                     bitmap_area_threshold=config.bitmap_area_threshold,
                     lang=config.ocr_languages,
-                    use_gpu=config.use_gpu_if_available
+                    use_gpu=config.enable_gpu if config.enable_gpu is not None else False
                 )
             elif config.ocr_engine == "tesseract":
                 pipeline_options.ocr_options = TesseractOcrOptions(
@@ -516,8 +520,8 @@ class UnifiedDocumentProcessor:
                 docling_output = self.converter.convert(Path(tmp_file.name))
                 
                 # Extract page info
-                if docling_output.pages:
-                    text = docling_output.pages[0].text if docling_output.pages[0].text else ""
+                if docling_output.document:
+                    text = docling_output.document.export_to_text()
                 else:
                     text = ""
                 
@@ -563,15 +567,24 @@ class UnifiedDocumentProcessor:
     
     def _convert_docling_output(self, docling_output: Any, pdf_path: Path) -> Document:
         """Convert Docling output to our Document model."""
+        # Extract text content
+        full_text = ""
+        if docling_output.document:
+            full_text = docling_output.document.export_to_text()
+        
         # Extract pages
         pages = []
         for i, page in enumerate(docling_output.pages):
+            # For single page processing, we have the full text
+            # For multi-page, we'd need to split text by pages (not implemented yet)
+            page_text = full_text if len(docling_output.pages) == 1 else ""
+            
             page_info = PageInfo(
                 page_number=i + 1,
                 width=page.size.width if hasattr(page, 'size') else 0,
                 height=page.size.height if hasattr(page, 'size') else 0,
-                text_content=page.text if hasattr(page, 'text') else "",
-                word_count=len(page.text.split()) if hasattr(page, 'text') and page.text else 0,
+                text_content=page_text,
+                word_count=len(page_text.split()) if page_text else 0,
                 has_images=False,  # Would need additional detection
                 has_tables=False   # Would need additional detection
             )
@@ -688,3 +701,170 @@ class UnifiedDocumentProcessor:
     def get_processing_stats(self) -> Dict[str, Any]:
         """Get processing statistics."""
         return self.stats.copy()
+    
+    def process_document_with_visual(
+        self,
+        pdf_source: Union[Path, str, bytes, BytesIO],
+        page_range: Optional[Tuple[int, int]] = None
+    ):
+        """
+        Process document with visual features enabled.
+        
+        Args:
+            pdf_source: PDF file path, bytes, or BytesIO stream
+            page_range: Optional page range to process
+            
+        Returns:
+            List of PageVisualInfo objects with text and visual features
+        """
+        from .models import PageVisualInfo, VisualFeatures
+        
+        # Process document
+        document = self.process_document(pdf_source, return_quality_report=True)
+        
+        # Convert to PageVisualInfo with visual features
+        visual_pages = []
+        
+        for page_info in document.page_info:
+            # Skip if outside page range
+            if page_range:
+                if page_info.page_number < page_range[0] or page_info.page_number > page_range[1]:
+                    continue
+            
+            # Create visual features (simplified for now)
+            visual_features = VisualFeatures(
+                num_columns=1,  # Would need actual detection
+                has_header=False,  # Would need actual detection
+                has_footer=False,  # Would need actual detection
+                num_images=1 if page_info.has_images else 0,
+                num_tables=1 if page_info.has_tables else 0,
+                num_charts=0,  # Would need actual detection
+                has_signature=False,  # Would need actual detection
+                layout_type="standard",  # Would need actual detection
+                page_orientation="portrait",  # Would need actual detection
+                dominant_colors=[],  # Would need actual detection
+                text_density=page_info.word_count / (page_info.width * page_info.height) if page_info.width and page_info.height else 0
+            )
+            
+            # Create PageVisualInfo
+            visual_page = PageVisualInfo(
+                page_number=page_info.page_number,
+                width=page_info.width,
+                height=page_info.height,
+                text_content=page_info.text_content,
+                word_count=page_info.word_count,
+                has_images=page_info.has_images,
+                has_tables=page_info.has_tables,
+                ocr_confidence=page_info.ocr_confidence,
+                ocr_quality_assessment=page_info.ocr_quality_assessment,
+                ocr_issues=page_info.ocr_issues,
+                corrections_made=page_info.corrections_made,
+                visual_features=visual_features
+            )
+            
+            visual_pages.append(visual_page)
+        
+        return visual_pages
+    
+    def process_document_stream_with_visual(
+        self,
+        pdf_bytes: bytes,
+        filename: str = "document.pdf"
+    ):
+        """
+        Process document stream with visual features enabled.
+        
+        Args:
+            pdf_bytes: PDF content as bytes
+            filename: Optional filename
+            
+        Returns:
+            List of PageVisualInfo objects with text and visual features
+        """
+        # Convert bytes to BytesIO for processing
+        from io import BytesIO
+        pdf_stream = BytesIO(pdf_bytes)
+        return self.process_document_with_visual(pdf_stream)
+    
+    def get_visual_summary(self, pages: List[Any]) -> Dict[str, Any]:
+        """
+        Get visual summary of processed pages.
+        
+        Args:
+            pages: List of processed pages
+            
+        Returns:
+            Summary dictionary with visual analysis
+        """
+        summary = {
+            'total_pages': len(pages),
+            'significant_layout_changes': [],
+            'visual_characteristics': {
+                'has_multiple_columns': False,
+                'has_images': False,
+                'has_tables': False,
+                'has_headers_footers': False
+            }
+        }
+        
+        # Analyze layout changes between pages
+        for i in range(1, len(pages)):
+            prev_page = pages[i-1]
+            curr_page = pages[i]
+            
+            # Check for significant changes
+            if hasattr(curr_page, 'visual_features') and hasattr(prev_page, 'visual_features'):
+                prev_features = prev_page.visual_features
+                curr_features = curr_page.visual_features
+                
+                # Column changes
+                if prev_features.num_columns != curr_features.num_columns:
+                    summary['significant_layout_changes'].append({
+                        'page': i + 1,
+                        'type': 'column_change',
+                        'from': prev_features.num_columns,
+                        'to': curr_features.num_columns
+                    })
+                
+                # Orientation changes
+                if prev_features.page_orientation != curr_features.page_orientation:
+                    summary['significant_layout_changes'].append({
+                        'page': i + 1,
+                        'type': 'orientation_change',
+                        'from': prev_features.page_orientation,
+                        'to': curr_features.page_orientation
+                    })
+        
+        # Aggregate visual characteristics
+        for page in pages:
+            if hasattr(page, 'visual_features'):
+                features = page.visual_features
+                if features.num_columns > 1:
+                    summary['visual_characteristics']['has_multiple_columns'] = True
+                if features.num_images > 0:
+                    summary['visual_characteristics']['has_images'] = True
+                if features.num_tables > 0:
+                    summary['visual_characteristics']['has_tables'] = True
+                if features.has_header or features.has_footer:
+                    summary['visual_characteristics']['has_headers_footers'] = True
+        
+        return summary
+    
+    def process_document_stream(
+        self,
+        pdf_bytes: bytes,
+        filename: str = "document.pdf"
+    ):
+        """
+        Process document from byte stream.
+        
+        Args:
+            pdf_bytes: PDF content as bytes
+            filename: Optional filename
+            
+        Returns:
+            Document object
+        """
+        from io import BytesIO
+        pdf_stream = BytesIO(pdf_bytes)
+        return self.process_document(pdf_stream)

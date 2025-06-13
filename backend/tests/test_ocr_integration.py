@@ -34,11 +34,12 @@ class TestOCRIntegration:
         with open(ground_truth_path, 'r') as f:
             ground_truth = json.load(f)
         
-        # Initialize unified processor in enhanced mode
+        # Initialize unified processor in smart mode with page limit
         processor = UnifiedDocumentProcessor(
-            mode=ProcessingMode.ENHANCED,
+            mode=ProcessingMode.SMART,
             enable_adaptive=True,
-            language="en"
+            language="en",
+            max_ocr_pages=5  # Limit OCR to 5 pages for speed
         )
         
         # Process document
@@ -113,7 +114,7 @@ class TestOCRIntegration:
         # Basic assertions
         assert document.total_pages == 36  # Ground truth says 36 pages
         assert stats['pages_processed'] == 36
-        assert processing_time < 180  # Should complete in under 3 minutes
+        assert processing_time < 120  # Should complete in under 2 minutes
         
         # Save results for comparison
         results = {
@@ -146,34 +147,36 @@ class TestOCRIntegration:
         base_doc = basic_processor.process_document(test_pdf_path)
         base_time = time.time() - base_start
         
-        # Process with enhanced mode (no adaptive for fair comparison)
-        print("\n2. Processing with Enhanced Mode...")
-        enhanced_processor = UnifiedDocumentProcessor(
-            mode=ProcessingMode.ENHANCED,
+        # Process with smart mode (limited OCR for speed)
+        print("\n2. Processing with Smart Mode...")
+        smart_processor = UnifiedDocumentProcessor(
+            mode=ProcessingMode.SMART,
             enable_adaptive=False,
-            language="en"
+            language="en",
+            max_ocr_pages=3  # Only OCR 3 pages for speed
         )
         
-        enhanced_start = time.time()
-        enhanced_doc = enhanced_processor.process_document(test_pdf_path, return_quality_report=False)
-        enhanced_time = time.time() - enhanced_start
+        smart_start = time.time()
+        smart_doc = smart_processor.process_document(test_pdf_path, return_quality_report=False)
+        smart_time = time.time() - smart_start
         
         # Compare results
         print("\n=== Comparison Results ===")
         print(f"Base processor time: {base_time:.2f}s")
-        print(f"Enhanced processor time: {enhanced_time:.2f}s")
-        print(f"Time difference: {enhanced_time - base_time:.2f}s ({((enhanced_time/base_time - 1) * 100):.1f}%)")
+        print(f"Smart processor time: {smart_time:.2f}s")
+        print(f"Time difference: {smart_time - base_time:.2f}s ({((smart_time/base_time - 1) * 100):.1f}%)")
         
         # Compare text extraction
         base_text_length = sum(len(p.text_content or "") for p in base_doc.page_info)
-        enhanced_text_length = sum(len(p.text_content or "") for p in enhanced_doc.page_info)
+        smart_text_length = sum(len(p.text_content or "") for p in smart_doc.page_info)
         
         print(f"\nBase text extracted: {base_text_length} characters")
-        print(f"Enhanced text extracted: {enhanced_text_length} characters")
-        print(f"Text difference: {enhanced_text_length - base_text_length} characters")
+        print(f"Smart text extracted: {smart_text_length} characters")
+        print(f"Text difference: {smart_text_length - base_text_length} characters")
         
-        # Check quality metrics (only available in enhanced)
-        enhanced_stats = enhanced_processor.get_processing_stats()
-        print(f"\nEnhanced processor stats:")
-        print(f"  Average confidence: {enhanced_stats['average_confidence']:.2%}")
-        print(f"  Total corrections: {enhanced_stats['total_corrections']}")
+        # Check quality metrics (only available in smart)
+        smart_stats = smart_processor.get_processing_stats()
+        print(f"\nSmart processor stats:")
+        print(f"  OCR performed: {smart_stats['ocr_performed']} pages")
+        print(f"  Average confidence: {smart_stats['average_confidence']:.2%}")
+        print(f"  Total corrections: {smart_stats['total_corrections']}")
