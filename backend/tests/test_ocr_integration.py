@@ -9,8 +9,7 @@ import json
 import pytest
 from datetime import datetime
 
-from src.core.enhanced_document_processor import EnhancedDocumentProcessor
-from src.core.document_processor import DocumentProcessor
+from src.core.unified_document_processor import UnifiedDocumentProcessor, ProcessingMode
 from src.core.ocr_config import OCRConfig
 
 
@@ -35,20 +34,21 @@ class TestOCRIntegration:
         with open(ground_truth_path, 'r') as f:
             ground_truth = json.load(f)
         
-        # Initialize enhanced processor
-        enhanced_processor = EnhancedDocumentProcessor(
+        # Initialize unified processor in enhanced mode
+        processor = UnifiedDocumentProcessor(
+            mode=ProcessingMode.ENHANCED,
             enable_adaptive=True,
             language="en"
         )
         
         # Process document
-        print("\n=== Processing with Enhanced Document Processor ===")
+        print("\n=== Processing with Unified Document Processor (Enhanced Mode) ===")
         start_time = time.time()
         
         def progress_callback(progress, message):
             print(f"Progress: {progress:.1f}% - {message}")
         
-        document = enhanced_processor.process_document(
+        document = processor.process_document(
             test_pdf_path,
             progress_callback=progress_callback,
             return_quality_report=True
@@ -61,7 +61,7 @@ class TestOCRIntegration:
         print(f"Total pages: {document.total_pages}")
         
         # Get processing stats
-        stats = enhanced_processor.get_processing_stats()
+        stats = processor.get_processing_stats()
         print("\n=== Processing Statistics ===")
         print(f"Pages processed: {stats['pages_processed']}")
         print(f"Pages preprocessed: {stats['pages_preprocessed']}")
@@ -134,23 +134,22 @@ class TestOCRIntegration:
         """Compare enhanced processor with base processor."""
         print("\n=== Comparing Base vs Enhanced Processor ===")
         
-        # Process with base processor
-        print("\n1. Processing with Base Processor...")
-        base_processor = DocumentProcessor(
-            ocr_config={
-                "ocr_engines": ["easyocr"],
-                "force_full_page_ocr": False,
-                "enable_gpu": False
-            }
+        # Process with basic mode
+        print("\n1. Processing with Basic Mode...")
+        basic_processor = UnifiedDocumentProcessor(
+            mode=ProcessingMode.BASIC,
+            enable_adaptive=False,
+            language="en"
         )
         
         base_start = time.time()
-        base_doc = base_processor.process_pdf(test_pdf_path)
+        base_doc = basic_processor.process_document(test_pdf_path)
         base_time = time.time() - base_start
         
-        # Process with enhanced processor (no adaptive for fair comparison)
-        print("\n2. Processing with Enhanced Processor...")
-        enhanced_processor = EnhancedDocumentProcessor(
+        # Process with enhanced mode (no adaptive for fair comparison)
+        print("\n2. Processing with Enhanced Mode...")
+        enhanced_processor = UnifiedDocumentProcessor(
+            mode=ProcessingMode.ENHANCED,
             enable_adaptive=False,
             language="en"
         )

@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 
-from ...core.enhanced_document_processor_v2 import EnhancedDocumentProcessorV2 as EnhancedDocumentProcessor
+from ...core.unified_document_processor import UnifiedDocumentProcessor, ProcessingMode
 from ...core.boundary_detector import BoundaryDetector
 from ...core.models import Document, ProcessingStatus, DocumentMetadata, Boundary
 
@@ -15,16 +15,19 @@ logger = logging.getLogger(__name__)
 class DocumentService:
     """Service for processing documents with enhanced OCR."""
     
-    def __init__(self, enable_adaptive_ocr: bool = True):
+    def __init__(self, enable_adaptive_ocr: bool = True, processing_mode: str = "smart"):
         """Initialize document service.
         
         Args:
             enable_adaptive_ocr: Enable adaptive OCR configuration
+            processing_mode: Processing mode (basic, enhanced, smart)
         """
         self.enable_adaptive_ocr = enable_adaptive_ocr
-        self.enhanced_processor = EnhancedDocumentProcessor(
+        self.processor = UnifiedDocumentProcessor(
+            mode=ProcessingMode(processing_mode),
             enable_adaptive=enable_adaptive_ocr,
-            language="en"
+            language="en",
+            max_ocr_pages=100  # Reasonable limit for API usage
         )
         self.boundary_detector = BoundaryDetector()
     
@@ -54,8 +57,8 @@ class DocumentService:
             if not pdf_path.exists():
                 raise FileNotFoundError(f"PDF file not found: {pdf_path}")
             
-            # Process with enhanced OCR
-            processed_doc = self.enhanced_processor.process_document(
+            # Process with unified processor
+            processed_doc = self.processor.process_document(
                 pdf_path,
                 progress_callback=progress_callback,
                 return_quality_report=True
@@ -78,7 +81,7 @@ class DocumentService:
             document.status = ProcessingStatus.COMPLETED
             
             # Get OCR statistics
-            stats = self.enhanced_processor.get_processing_stats()
+            stats = self.processor.get_processing_stats()
             
             logger.info(
                 f"Document {document.id} processed successfully. "

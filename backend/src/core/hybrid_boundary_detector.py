@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .boundary_detector import BoundaryDetector, BoundaryCandidate
 from .visual_boundary_detector import VisualBoundaryDetector, VisualBoundaryCandidate
-from .enhanced_document_processor import EnhancedDocumentProcessor
+from .unified_document_processor import UnifiedDocumentProcessor, ProcessingMode
 from .models import (
     PageInfo, 
     PageVisualInfo, 
