@@ -5,6 +5,10 @@ import numpy as np
 import cv2
 from pathlib import Path
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from src.core.ocr_preprocessor import OCRPreprocessor
 from src.core.ocr_confidence_scorer import OCRConfidenceScorer
 from src.core.ocr_postprocessor import OCRPostProcessor

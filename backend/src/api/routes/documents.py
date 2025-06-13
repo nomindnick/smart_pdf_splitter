@@ -184,6 +184,45 @@ async def download_split_document(document_id: str, index: int) -> FileResponse:
     raise HTTPException(status_code=404, detail="Split document not found")
 
 
+@router.get("/{document_id}/quality")
+async def get_document_quality(document_id: str) -> dict:
+    """Get OCR quality summary for a document."""
+    if document_id not in documents_store:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    document = documents_store[document_id]
+    
+    if document.status != ProcessingStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document processing not completed. Current status: {document.status}",
+        )
+    
+    return document_service.get_document_quality_summary(document)
+
+
+@router.get("/{document_id}/pages/{page_number}/ocr")
+async def get_page_ocr_details(document_id: str, page_number: int) -> dict:
+    """Get detailed OCR information for a specific page."""
+    if document_id not in documents_store:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    document = documents_store[document_id]
+    
+    if document.status != ProcessingStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document processing not completed. Current status: {document.status}",
+        )
+    
+    details = document_service.get_page_ocr_details(document, page_number)
+    
+    if "error" in details:
+        raise HTTPException(status_code=400, detail=details["error"])
+    
+    return details
+
+
 @router.delete("/{document_id}")
 async def delete_document(document_id: str) -> dict:
     """Delete a document and all associated files."""
@@ -202,14 +241,23 @@ async def delete_document(document_id: str) -> dict:
     return {"message": "Document deleted successfully"}
 
 
-# Background task placeholder
+# Import document service
+from ..services.document_service import DocumentService
+
+# Initialize document service
+document_service = DocumentService(enable_adaptive_ocr=True)
+
+
+# Background task for document processing
 async def process_document(document_id: str):
-    """Process document (placeholder for Celery task)."""
-    # This will be replaced with actual Celery task
-    if document_id in documents_store:
-        documents_store[document_id].status = ProcessingStatus.PROCESSING
-        # Simulate processing
-        import asyncio
-        await asyncio.sleep(2)
-        documents_store[document_id].status = ProcessingStatus.COMPLETED
-        documents_store[document_id].total_pages = 14  # Mock value
+    """Process document with enhanced OCR."""
+    if document_id not in documents_store:
+        return
+    
+    document = documents_store[document_id]
+    
+    # Process document
+    processed_document = await document_service.process_document(document)
+    
+    # Update store
+    documents_store[document_id] = processed_document

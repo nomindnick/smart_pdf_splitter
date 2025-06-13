@@ -183,7 +183,7 @@ class EnhancedDocumentProcessor:
         
         # Sample pages for analysis
         sample_size = min(5, total_pages)
-        sample_indices = np.linspace(0, total_pages - 1, sample_size, dtype=int)
+        sample_indices = np.linspace(0, total_pages - 1, sample_size, dtype=int).tolist()
         
         sample_pages = []
         for idx in sample_indices:
@@ -341,8 +341,12 @@ class EnhancedDocumentProcessor:
     def _detect_tables_on_page(self, page: fitz.Page) -> bool:
         """Simple table detection on page."""
         # Check for table-like structures using PyMuPDF
-        tables = page.find_tables()
-        return len(tables) > 0 if hasattr(page, 'find_tables') else False
+        try:
+            tables = page.find_tables()
+            # TableFinder object has a .tables attribute
+            return len(tables.tables) > 0 if hasattr(tables, 'tables') else False
+        except:
+            return False
     
     def _assess_overall_quality(self, confidence: float) -> str:
         """Assess overall document quality."""
