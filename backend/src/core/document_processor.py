@@ -26,6 +26,7 @@ from docling.datamodel.pipeline_options import (
 from docling.utils.utils import chunkify
 
 from .models import PageInfo, BoundingBox, ProcessingStatus
+from .ocr_optimizer import check_pdf_needs_ocr, get_optimal_ocr_engine
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,10 @@ class DocumentProcessor:
         self,
         enable_ocr: bool = True,
         ocr_languages: List[str] = None,
-        ocr_engine: str = "easyocr",  # "easyocr", "tesserocr", or "tesseract-cli"
+        ocr_engine: str = "auto",  # "auto", "easyocr", "tesserocr", or "tesseract-cli"
         page_batch_size: int = 4,
-        max_memory_mb: int = 4096  # 4GB default limit
+        max_memory_mb: int = 4096,  # 4GB default limit
+        auto_detect_ocr: bool = True  # Automatically detect if OCR is needed
     ):
         """
         Initialize document processor with configuration.
@@ -52,15 +54,18 @@ class DocumentProcessor:
         Args:
             enable_ocr: Whether to enable OCR for scanned documents
             ocr_languages: List of languages for OCR (default: ["en"])
-            ocr_engine: OCR engine to use ("easyocr", "tesserocr", or "tesseract-cli")
+            ocr_engine: OCR engine to use ("auto", "easyocr", "tesserocr", or "tesseract-cli")
             page_batch_size: Number of pages to process in batch
             max_memory_mb: Maximum memory usage in MB
+            auto_detect_ocr: Automatically detect if OCR is needed for each PDF
         """
         self.enable_ocr = enable_ocr
         self.ocr_languages = ocr_languages or ["en"]
         self.ocr_engine = ocr_engine
         self.page_batch_size = page_batch_size
         self.max_memory_mb = max_memory_mb
+        self.auto_detect_ocr = auto_detect_ocr
+        self._current_ocr_needed = enable_ocr  # Will be updated per document
         
         # Configure pipeline options
         self.pipeline_options = self._create_pipeline_options()
@@ -79,11 +84,13 @@ class DocumentProcessor:
         options = PdfPipelineOptions()
         
         # OCR configuration
-        if self.enable_ocr:
+        if self._current_ocr_needed:
             options.do_ocr = True
             
             # Select OCR engine based on configuration
-            if self.ocr_engine == "easyocr":
+            actual_engine = self.ocr_engine if self.ocr_engine != "auto" else "tesserocr"
+            
+            if actual_engine == "easyocr":
                 options.ocr_options = EasyOcrOptions(
                     kind='easyocr',
                     lang=self.ocr_languages,
@@ -91,14 +98,14 @@ class DocumentProcessor:
                     force_full_page_ocr=False,
                     bitmap_area_threshold=0.05
                 )
-            elif self.ocr_engine == "tesserocr":
+            elif actual_engine == "tesserocr":
                 options.ocr_options = TesseractOcrOptions(
                     kind='tesserocr',
                     lang=self.ocr_languages,
                     force_full_page_ocr=False,
                     bitmap_area_threshold=0.05
                 )
-            elif self.ocr_engine == "tesseract-cli":
+            elif actual_engine == "tesseract-cli":
                 options.ocr_options = TesseractCliOcrOptions(
                     kind='tesseract',
                     lang=self.ocr_languages,
@@ -107,9 +114,9 @@ class DocumentProcessor:
                     tesseract_cmd='tesseract'  # Use the tesseract command line tool
                 )
             else:
-                logger.warning(f"Unknown OCR engine: {self.ocr_engine}, using EasyOCR")
-                options.ocr_options = EasyOcrOptions(
-                    kind='easyocr',
+                logger.warning(f"Unknown OCR engine: {actual_engine}, using TesserOCR")
+                options.ocr_options = TesseractOcrOptions(
+                    kind='tesserocr',
                     lang=self.ocr_languages,
                     use_gpu=False
                 )
@@ -139,6 +146,45 @@ class DocumentProcessor:
             PageInfo objects for each processed page
         """
         logger.info(f"Processing document: {file_path}")
+        
+        # Auto-detect OCR needs if enabled
+        if self.auto_detect_ocr and self.enable_ocr:
+            needs_ocr, reason = check_pdf_needs_ocr(str(file_path))
+            logger.info(f"OCR detection: {reason}")
+            
+            if needs_ocr:
+                # If OCR is needed and engine is auto, select optimal engine
+                if self.ocr_engine == "auto":
+                    import fitz
+                    doc = fitz.open(str(file_path))
+                    page_count = len(doc)
+                    doc.close()
+                    
+                    optimal_engine = get_optimal_ocr_engine(
+                        page_count=page_count,
+                        has_gpu=False,  # Conservative assumption
+                        memory_limit_mb=self.max_memory_mb
+                    )
+                    logger.info(f"Selected OCR engine: {optimal_engine}")
+                    self.ocr_engine = optimal_engine
+                    
+                # Recreate pipeline options with OCR enabled
+                self._current_ocr_needed = True
+                self.pipeline_options = self._create_pipeline_options()
+                
+                # Recreate converter with new options
+                self.converter = DocumentConverter(
+                    format_options={
+                        InputFormat.PDF: PdfFormatOption(
+                            pipeline_options=self.pipeline_options
+                        )
+                    }
+                )
+            else:
+                # No OCR needed, disable it for this document
+                self._current_ocr_needed = False
+                self.pipeline_options.do_ocr = False
+                logger.info("OCR disabled for this document - text already embedded")
         
         try:
             # Convert document with optional page range
