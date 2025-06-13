@@ -512,18 +512,35 @@ class UnifiedDocumentProcessor:
         temp_doc.insert_pdf(fitz.open(str(pdf_path)), from_page=page_number-1, to_page=page_number-1)
         
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
-            temp_doc.save(tmp_file.name)
-            temp_doc.close()
-            
-            # Process with Docling
             try:
-                docling_output = self.converter.convert(Path(tmp_file.name))
+                temp_doc.save(tmp_file.name)
+                temp_doc.close()
                 
-                # Extract page info
-                if docling_output.document:
-                    text = docling_output.document.export_to_text()
-                else:
-                    text = ""
+                # Process with Docling
+                try:
+                    docling_output = self.converter.convert(Path(tmp_file.name))
+                    
+                    # Extract page info
+                    if docling_output.document:
+                        text = docling_output.document.export_to_text()
+                    else:
+                        text = ""
+                except Exception as e:
+                    logger.warning(f"Docling conversion failed for page {page_number}: {e}")
+                    # Fall back to basic text extraction
+                    text = page.get_text()
+                    if not text.strip():
+                        # Try simple OCR fallback
+                        import pytesseract
+                        from PIL import Image
+                        mat = fitz.Matrix(2, 2)  # 2x scaling
+                        pix = page.get_pixmap(matrix=mat)
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        try:
+                            text = pytesseract.image_to_string(img)
+                        except Exception as ocr_e:
+                            logger.error(f"OCR fallback failed for page {page_number}: {ocr_e}")
+                            text = ""
                 
                 page_info = PageInfo(
                     page_number=page_number,
@@ -538,6 +555,20 @@ class UnifiedDocumentProcessor:
                 # Apply enhancements
                 quality_report = self._enhance_page(page_info, config)
                 
+            except Exception as e:
+                logger.error(f"Failed to process page {page_number}: {e}")
+                # Return minimal page info on failure
+                page_info = PageInfo(
+                    page_number=page_number,
+                    width=page.rect.width,
+                    height=page.rect.height,
+                    text_content="",
+                    word_count=0,
+                    has_images=False,
+                    has_tables=False
+                )
+                quality_report = None
+            
             finally:
                 Path(tmp_file.name).unlink()
         

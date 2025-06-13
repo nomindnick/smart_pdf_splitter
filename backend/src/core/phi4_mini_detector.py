@@ -92,14 +92,14 @@ Respond in JSON format:
     
     def __init__(
         self,
-        model_name: str = "phi4-mini:3.8b",
+        model_name: Optional[str] = None,
         ollama_host: Optional[str] = None,
         min_confidence: float = 0.6,
         min_signals: int = 1,
         enable_visual_analysis: bool = True,
         use_llm_for_ambiguous: bool = True,
         llm_batch_size: int = 5,
-        llm_timeout: float = 30.0
+        llm_timeout: Optional[float] = None
     ):
         """
         Initialize Phi-4 Mini boundary detector.
@@ -116,14 +116,19 @@ Respond in JSON format:
         """
         super().__init__(min_confidence, min_signals, enable_visual_analysis)
         
-        self.model_name = model_name
+        # Import settings
+        from .config import settings
+        
+        self.model_name = model_name or settings.llm_model
         self.use_llm_for_ambiguous = use_llm_for_ambiguous
         self.llm_batch_size = llm_batch_size
-        self.llm_timeout = llm_timeout
+        self.llm_timeout = llm_timeout if llm_timeout is not None else settings.llm_timeout
         
         # Initialize Ollama client
         try:
-            self.client = Client(host=ollama_host) if ollama_host else Client()
+            # Use configured ollama URL or default
+            host = ollama_host or settings.ollama_url
+            self.client = Client(host=host)
             # Test connection
             self._test_ollama_connection()
         except Exception as e:

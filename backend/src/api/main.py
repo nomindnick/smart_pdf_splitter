@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from ..core.models import ProcessingStatus
 from .routes import documents, health
+from . import enhanced_routes
 
 # Configure logging
 logging.basicConfig(
@@ -51,6 +52,7 @@ app.add_middleware(
 # Include routers
 app.include_router(health.router, tags=["health"])
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
+app.include_router(enhanced_routes.router, tags=["enhanced"])
 
 
 @app.exception_handler(Exception)

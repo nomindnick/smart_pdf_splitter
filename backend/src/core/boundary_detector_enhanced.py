@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from collections import defaultdict
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from enum import Enum
 
 import httpx
 from docling.datamodel.base_models import DocumentStream
@@ -36,8 +37,8 @@ from .boundary_detector import BoundaryDetector, BoundaryCandidate
 logger = logging.getLogger(__name__)
 
 
-# Extend SignalType enum for new detection methods
-class ExtendedSignalType(SignalType):
+# Define additional signal types for new detection methods
+class ExtendedSignalType(Enum):
     """Extended signal types including LLM-based detections."""
     LLM_CONTEXT = "llm_context"
     LLM_SEMANTIC = "llm_semantic"

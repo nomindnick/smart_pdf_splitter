@@ -144,13 +144,12 @@ class HybridBoundaryDetector:
         # Fall back to standard processing
         if use_visual and self.visual_detector:
             # Process with visual features
-            pages = list(self.processor.process_document_with_visual(file_path, page_range))
-            return self._detect_hybrid_boundaries(pages)
+            document = self.processor.process_document_with_visual(file_path, page_range)
+            return self._detect_hybrid_boundaries(document.page_info)
         else:
             # Process text only
-            pages = list(self.processor.process_document(file_path, page_range))
-            page_infos = [PageInfo(**p.dict()) for p in pages]
-            return self.text_detector.detect_boundaries(page_infos)
+            document = self.processor.process_document(file_path, page_range)
+            return self.text_detector.detect_boundaries(document.page_info)
     
     def detect_boundaries_from_stream(
         self,
@@ -176,21 +175,20 @@ class HybridBoundaryDetector:
         
         if use_visual and self.visual_detector:
             # Process with visual features
-            pages = list(self.processor.process_document_stream_with_visual(pdf_bytes, filename))
-            return self._detect_hybrid_boundaries(pages)
+            document = self.processor.process_document_stream_with_visual(pdf_bytes, filename)
+            return self._detect_hybrid_boundaries(document.page_info)
         else:
             # Process text only
-            pages = list(self.processor.process_document_stream(pdf_bytes, filename))
-            return self.text_detector.detect_boundaries(pages)
+            document = self.processor.process_document_stream(pdf_bytes, filename)
+            return self.text_detector.detect_boundaries(document.page_info)
     
     def _detect_hybrid_boundaries(
         self,
-        pages: List[PageVisualInfo]
+        pages: List[PageInfo]
     ) -> List[Boundary]:
         """Combine text and visual boundary detection."""
         # Get text-based boundaries
-        page_infos = [PageInfo(**p.dict()) for p in pages]
-        text_boundaries = self.text_detector.detect_boundaries(page_infos)
+        text_boundaries = self.text_detector.detect_boundaries(pages)
         
         # Get visual boundaries
         visual_candidates = self.visual_detector.detect_visual_boundaries(pages)

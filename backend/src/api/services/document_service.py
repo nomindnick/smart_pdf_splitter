@@ -7,6 +7,7 @@ from typing import Dict, Optional
 
 from ...core.unified_document_processor import UnifiedDocumentProcessor, ProcessingMode
 from ...core.boundary_detector import BoundaryDetector
+from ...core.hybrid_boundary_detector import HybridBoundaryDetector, VisualProcessingConfig
 from ...core.models import Document, ProcessingStatus, DocumentMetadata, Boundary
 
 logger = logging.getLogger(__name__)
@@ -15,21 +16,50 @@ logger = logging.getLogger(__name__)
 class DocumentService:
     """Service for processing documents with enhanced OCR."""
     
-    def __init__(self, enable_adaptive_ocr: bool = True, processing_mode: str = "smart"):
+    def __init__(
+        self, 
+        enable_adaptive_ocr: bool = True, 
+        processing_mode: str = "smart",
+        enable_visual_detection: bool = True,
+        enable_llm_detection: bool = False,
+        enable_intelligent_ocr: bool = True
+    ):
         """Initialize document service.
         
         Args:
             enable_adaptive_ocr: Enable adaptive OCR configuration
             processing_mode: Processing mode (basic, enhanced, smart)
+            enable_visual_detection: Enable visual boundary detection
+            enable_llm_detection: Enable LLM-based boundary detection
+            enable_intelligent_ocr: Enable intelligent OCR strategy
         """
         self.enable_adaptive_ocr = enable_adaptive_ocr
-        self.processor = UnifiedDocumentProcessor(
-            mode=ProcessingMode(processing_mode),
-            enable_adaptive=enable_adaptive_ocr,
-            language="en",
-            max_ocr_pages=100  # Reasonable limit for API usage
+        self.enable_visual_detection = enable_visual_detection
+        self.enable_llm_detection = enable_llm_detection
+        
+        # Configure visual processing
+        visual_config = VisualProcessingConfig(
+            enable_visual_features=enable_visual_detection,
+            enable_llm=enable_llm_detection,
+            enable_intelligent_ocr=enable_intelligent_ocr,
+            visual_confidence_threshold=0.5,
+            llm_confidence_threshold=0.7
         )
-        self.boundary_detector = BoundaryDetector()
+        
+        # Use hybrid boundary detector if visual or LLM is enabled
+        if enable_visual_detection or enable_llm_detection:
+            self.boundary_detector = HybridBoundaryDetector(config=visual_config)
+            # The hybrid detector has its own processor
+            self.processor = self.boundary_detector.processor
+        else:
+            # Use basic boundary detector
+            self.processor = UnifiedDocumentProcessor(
+                mode=ProcessingMode(processing_mode),
+                enable_adaptive=enable_adaptive_ocr,
+                language="en",
+                max_ocr_pages=100
+            )
+            self.boundary_detector = BoundaryDetector()
     
     async def process_document(
         self,
@@ -57,20 +87,41 @@ class DocumentService:
             if not pdf_path.exists():
                 raise FileNotFoundError(f"PDF file not found: {pdf_path}")
             
-            # Process with unified processor
-            processed_doc = self.processor.process_document(
-                pdf_path,
-                progress_callback=progress_callback,
-                return_quality_report=True
-            )
+            # Detect boundaries using appropriate detector
+            if isinstance(self.boundary_detector, HybridBoundaryDetector):
+                # Hybrid detector handles its own processing
+                boundaries = self.boundary_detector.detect_boundaries(
+                    pdf_path,
+                    use_visual=self.enable_visual_detection
+                )
+                
+                # Get processed document info from the detector's processor
+                processed_doc = self.processor.process_document(
+                    pdf_path,
+                    progress_callback=progress_callback,
+                    return_quality_report=True
+                )
+                
+                # Update document with processed data
+                document.total_pages = processed_doc.total_pages
+                document.page_info = processed_doc.page_info
+                document.metadata = processed_doc.metadata
+            else:
+                # Process with unified processor
+                processed_doc = self.processor.process_document(
+                    pdf_path,
+                    progress_callback=progress_callback,
+                    return_quality_report=True
+                )
+                
+                # Update document with processed data
+                document.total_pages = processed_doc.total_pages
+                document.page_info = processed_doc.page_info
+                document.metadata = processed_doc.metadata
+                
+                # Detect boundaries
+                boundaries = self.boundary_detector.detect_boundaries(processed_doc)
             
-            # Update document with processed data
-            document.total_pages = processed_doc.total_pages
-            document.page_info = processed_doc.page_info
-            document.metadata = processed_doc.metadata
-            
-            # Detect boundaries
-            boundaries = self.boundary_detector.detect_boundaries(processed_doc)
             document.detected_boundaries = boundaries
             
             # Calculate processing time
@@ -83,12 +134,16 @@ class DocumentService:
             # Get OCR statistics
             stats = self.processor.get_processing_stats()
             
+            # Add detection summary if using hybrid detector
+            detection_method = "hybrid" if isinstance(self.boundary_detector, HybridBoundaryDetector) else "basic"
+            
             logger.info(
                 f"Document {document.id} processed successfully. "
                 f"Pages: {document.total_pages}, "
                 f"Boundaries: {len(boundaries)}, "
                 f"Time: {processing_time:.2f}s, "
-                f"OCR confidence: {stats['average_confidence']:.2%}"
+                f"OCR confidence: {stats['average_confidence']:.2%}, "
+                f"Detection method: {detection_method}"
             )
             
             return document

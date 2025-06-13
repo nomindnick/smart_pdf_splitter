@@ -4,9 +4,10 @@ import os
 import uuid
 from typing import Dict, List
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, BackgroundTasks
+from fastapi import APIRouter, File, HTTPException, UploadFile, BackgroundTasks, Query
 from fastapi.responses import FileResponse
 
+from ...core.config import settings
 from ...core.models import (
     Boundary,
     BoundaryUpdateRequest,
@@ -28,6 +29,9 @@ documents_store: Dict[str, Document] = {}
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    enable_visual_detection: bool = Query(default=None, description="Enable visual boundary detection"),
+    enable_llm_detection: bool = Query(default=None, description="Enable LLM-based boundary detection"),
+    enable_intelligent_ocr: bool = Query(default=None, description="Enable intelligent OCR strategy"),
 ) -> DocumentUploadResponse:
     """Upload a PDF document for processing."""
     # Validate file type
@@ -39,14 +43,17 @@ async def upload_document(
     content = await file.read()
     file_size = len(content)
     
-    if file_size > 500 * 1024 * 1024:  # 500MB limit
-        raise HTTPException(status_code=400, detail="File size exceeds 500MB limit")
+    if file_size > settings.max_upload_size_bytes:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"File size exceeds {settings.max_upload_size_mb}MB limit"
+        )
     
     # Generate unique document ID
     document_id = str(uuid.uuid4())
     
     # Save file temporarily
-    upload_dir = "/tmp/pdf_uploads"
+    upload_dir = settings.upload_dir
     os.makedirs(upload_dir, exist_ok=True)
     file_path = os.path.join(upload_dir, f"{document_id}.pdf")
     
@@ -65,8 +72,19 @@ async def upload_document(
     
     documents_store[document_id] = document
     
-    # Queue processing task
-    background_tasks.add_task(process_document, document_id)
+    # Use settings defaults if not specified
+    visual_detection = enable_visual_detection if enable_visual_detection is not None else settings.enable_visual_detection
+    llm_detection = enable_llm_detection if enable_llm_detection is not None else settings.enable_llm_detection
+    intelligent_ocr = enable_intelligent_ocr if enable_intelligent_ocr is not None else settings.enable_intelligent_ocr
+    
+    # Queue processing task with detection options
+    background_tasks.add_task(
+        process_document, 
+        document_id,
+        visual_detection,
+        llm_detection,
+        intelligent_ocr
+    )
     
     return DocumentUploadResponse(
         document_id=document_id,
@@ -198,7 +216,9 @@ async def get_document_quality(document_id: str) -> dict:
             detail=f"Document processing not completed. Current status: {document.status}",
         )
     
-    return document_service.get_document_quality_summary(document)
+    # Create a service instance to access the method
+    service = DocumentService()
+    return service.get_document_quality_summary(document)
 
 
 @router.get("/{document_id}/pages/{page_number}/ocr")
@@ -215,7 +235,9 @@ async def get_page_ocr_details(document_id: str, page_number: int) -> dict:
             detail=f"Document processing not completed. Current status: {document.status}",
         )
     
-    details = document_service.get_page_ocr_details(document, page_number)
+    # Create a service instance to access the method
+    service = DocumentService()
+    details = service.get_page_ocr_details(document, page_number)
     
     if "error" in details:
         raise HTTPException(status_code=400, detail=details["error"])
@@ -244,20 +266,33 @@ async def delete_document(document_id: str) -> dict:
 # Import document service
 from ..services.document_service import DocumentService
 
-# Initialize document service
-document_service = DocumentService(enable_adaptive_ocr=True)
+# Document service will be initialized per request with specific options
+document_service = None
 
 
 # Background task for document processing
-async def process_document(document_id: str):
-    """Process document with enhanced OCR."""
+async def process_document(
+    document_id: str,
+    enable_visual_detection: bool = True,
+    enable_llm_detection: bool = False,
+    enable_intelligent_ocr: bool = True
+):
+    """Process document with enhanced OCR and configurable detection."""
     if document_id not in documents_store:
         return
     
     document = documents_store[document_id]
     
+    # Initialize document service with specific options
+    service = DocumentService(
+        enable_adaptive_ocr=True,
+        enable_visual_detection=enable_visual_detection,
+        enable_llm_detection=enable_llm_detection,
+        enable_intelligent_ocr=enable_intelligent_ocr
+    )
+    
     # Process document
-    processed_document = await document_service.process_document(document)
+    processed_document = await service.process_document(document)
     
     # Update store
     documents_store[document_id] = processed_document
