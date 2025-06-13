@@ -1,5 +1,0 @@
-{
-  "test_file": "../tests/test_files/Test_PDF_Set_1.pdf",
-  "ground_truth_documents": 14,
-  "results": []
-}

@@ -183,3 +183,12 @@ mprofile_*.dat
 dump.rdb
 # Reference materials
 references/
+
+# Test outputs
+full_test_results.json
+**/ocr_integration_results.json
+**/page_quality_distribution.json
+tests/ocr_test_output/
+
+# API logs
+api_server*.log
