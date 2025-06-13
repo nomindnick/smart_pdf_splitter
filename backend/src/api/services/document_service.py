@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 
-from ...core.enhanced_document_processor import EnhancedDocumentProcessor
+from ...core.enhanced_document_processor_v2 import EnhancedDocumentProcessorV2 as EnhancedDocumentProcessor
 from ...core.boundary_detector import BoundaryDetector
 from ...core.models import Document, ProcessingStatus, DocumentMetadata, Boundary
 

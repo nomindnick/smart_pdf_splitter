@@ -59,6 +59,7 @@ class EnhancedDocumentProcessor:
         
         # Base document processor (will be configured per document)
         self._base_processor = None
+        self._current_doc_config = None
         
         # Processing statistics
         self.stats = {
@@ -102,6 +103,18 @@ class EnhancedDocumentProcessor:
             progress_callback(0, "Analyzing document...")
         
         doc_config = self._analyze_and_configure(pdf_path)
+        self._current_doc_config = doc_config
+        
+        # Initialize base processor with proper OCR settings
+        if doc_config.enable_ocr:
+            from .document_processor import DocumentProcessor
+            self._base_processor = DocumentProcessor(
+                enable_ocr=True,
+                ocr_languages=doc_config.ocr_languages,
+                ocr_engine=doc_config.ocr_engine,
+                page_batch_size=doc_config.page_batch_size,
+                auto_detect_ocr=False  # We already determined this
+            )
         
         # Step 2: Process pages with enhancements
         processed_pages = []
@@ -272,11 +285,49 @@ class EnhancedDocumentProcessor:
                 self.stats["pages_preprocessed"] += 1
             
             # Perform OCR using base processor
-            # For now, we'll simulate OCR result
-            # In production, this would use the configured OCR engine
-            text = f"[OCR would be performed here for page {page_number}]"
-            self.stats["ocr_performed"] += 1
+            if self._base_processor and config.enable_ocr:
+                # Save preprocessed image temporarily
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                    # Convert processed image back to PIL/bytes for Docling
+                    if len(processed_img.shape) == 2:  # Grayscale
+                        cv2.imwrite(tmp_file.name, processed_img)
+                    else:  # Color
+                        cv2.imwrite(tmp_file.name, cv2.cvtColor(processed_img, cv2.COLOR_RGB2BGR))
+                    
+                    # Create a temporary PDF page from the preprocessed image
+                    temp_doc = fitz.open()
+                    temp_page = temp_doc.new_page(width=processed_img.shape[1], height=processed_img.shape[0])
+                    temp_page.insert_image(temp_page.rect, filename=tmp_file.name)
+                    
+                    # Save as temporary PDF
+                    temp_pdf_path = tmp_file.name.replace('.png', '.pdf')
+                    temp_doc.save(temp_pdf_path)
+                    temp_doc.close()
+                    
+                    # Process with Docling
+                    try:
+                        from pathlib import Path
+                        docling_result = self._base_processor.process_pdf(Path(temp_pdf_path))
+                        if docling_result.page_info and len(docling_result.page_info) > 0:
+                            text = docling_result.page_info[0].text_content or ""
+                        else:
+                            text = ""
+                    except Exception as e:
+                        logger.warning(f"OCR failed for page {page_number}: {e}")
+                        text = ""
+                    finally:
+                        # Clean up temp files
+                        import os
+                        if os.path.exists(tmp_file.name):
+                            os.unlink(tmp_file.name)
+                        if os.path.exists(temp_pdf_path):
+                            os.unlink(temp_pdf_path)
+            else:
+                # Fallback for testing
+                text = f"[OCR disabled or not configured for page {page_number}]"
             
+            self.stats["ocr_performed"] += 1
             pix = None
         
         # Score confidence
