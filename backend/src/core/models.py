@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ProcessingStatus(str, Enum):
@@ -69,7 +69,8 @@ class BoundingBox(BaseModel):
     width: float = Field(..., description="Width of the box")
     height: float = Field(..., description="Height of the box")
     
-    @validator("width", "height")
+    @field_validator("width", "height")
+    @classmethod
     def positive_dimensions(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("Dimensions must be positive")
@@ -106,9 +107,10 @@ class Boundary(BaseModel):
     signals: List[Signal] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     
-    @validator("end_page")
-    def end_after_start(cls, v: int, values: dict) -> int:
-        if "start_page" in values and v < values["start_page"]:
+    @field_validator("end_page")
+    @classmethod
+    def end_after_start(cls, v: int, info) -> int:
+        if info.data.get("start_page") and v < info.data["start_page"]:
             raise ValueError("End page must be >= start page")
         return v
     
@@ -264,11 +266,10 @@ class SplitResult(BaseModel):
     split_documents: List[SplitDocument] = Field(default_factory=list)
     total_documents: int = Field(default=0, ge=0)
     
-    @validator("total_documents", always=True)
-    def set_total_documents(cls, v: int, values: dict) -> int:
-        if "split_documents" in values:
-            return len(values["split_documents"])
-        return v
+    @model_validator(mode="after")
+    def set_total_documents(self) -> "SplitDocumentResult":
+        self.total_documents = len(self.split_documents)
+        return self
 
 
 # Request/Response Models for API
@@ -287,7 +288,8 @@ class BoundaryUpdateRequest(BaseModel):
     
     boundaries: List[Boundary]
     
-    @validator("boundaries")
+    @field_validator("boundaries")
+    @classmethod
     def non_empty_boundaries(cls, v: List[Boundary]) -> List[Boundary]:
         if not v:
             raise ValueError("At least one boundary must be provided")
